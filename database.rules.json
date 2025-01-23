@@ -1,0 +1,35 @@
+{
+  "rules": {
+    ".read": "auth != null",
+    ".write": "auth != null",
+    "videos": {
+      ".indexOn": ["createdAt"],
+      "$uid": {
+        ".indexOn": ["createdAt"],
+        "$videoId": {
+          ".validate": "newData.hasChildren(['title', 'url', 'createdAt', 'userId'])",
+          "title": { ".validate": "newData.isString()" },
+          "description": { ".validate": "newData.isString()" },
+          "url": { ".validate": "newData.isString()" },
+          "thumbnail": { ".validate": "newData.isString()" },
+          "createdAt": { ".validate": "newData.isString()" },
+          "userId": { ".validate": "newData.isString()" },
+          "likes": { ".validate": "newData.isNumber()" },
+          "comments": { ".validate": "newData.isNumber()" }
+        }
+      }
+    },
+    "users": {
+      "$uid": {
+        ".validate": "newData.hasChildren(['username', 'email'])",
+        "username": { ".validate": "newData.isString()" },
+        "email": { ".validate": "newData.isString()" },
+        "bio": { ".validate": "newData.isString()" },
+        "profilePicture": { ".validate": "newData.isString()" },
+        "followers": { ".validate": "newData.isNumber()" },
+        "following": { ".validate": "newData.isNumber()" },
+        "createdAt": { ".validate": "newData.isString()" }
+      }
+    }
+  }
+} 
