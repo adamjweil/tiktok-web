@@ -2,10 +2,12 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/router';
 import { useAuth } from '../contexts/AuthContext';
+import { useUploadModal } from '../contexts/UploadModalContext';
 
 export default function Navigation() {
   const { user, logout } = useAuth();
   const router = useRouter();
+  const { openUploadModal } = useUploadModal();
 
   const handleLogout = async () => {
     try {
@@ -55,15 +57,15 @@ export default function Navigation() {
               Profile
             </Link>
 
-            <Link 
-              href="/upload" 
-              className="flex items-center px-4 py-2 text-gray-700 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg"
+            <button 
+              onClick={openUploadModal}
+              className="flex items-center px-4 py-2 text-gray-700 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg w-full text-left"
             >
               <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
               </svg>
               Upload a Video
-            </Link>
+            </button>
 
             <Link 
               href="/users" 

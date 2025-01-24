@@ -5,6 +5,7 @@ import { ref as storageRef, getDownloadURL } from 'firebase/storage';
 import { useAuth } from '../contexts/AuthContext';
 import Link from 'next/link';
 import Image from 'next/image';
+import { useUploadModal } from '../contexts/UploadModalContext';
 
 interface Video {
   id: string;
@@ -39,6 +40,7 @@ export default function Home() {
   const [newComment, setNewComment] = useState('');
   const [comments, setComments] = useState<Record<string, Comment[]>>({});
   const { user } = useAuth();
+  const { openUploadModal } = useUploadModal();
   const pageSize = 10;
 
   const fetchVideos = async () => {
@@ -229,16 +231,16 @@ export default function Home() {
   return (
     <div className="max-w-2xl mx-auto pb-20">
       {user && (
-        <Link
-          href="/upload"
+        <button
+          onClick={openUploadModal}
           className="fixed bottom-8 right-8 bg-indigo-600 text-white p-4 rounded-full shadow-lg hover:bg-indigo-700 transition-colors"
+          aria-label="Upload video"
         >
           <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
-        </Link>
+        </button>
       )}
-
       {videos.map((video) => (
         <div key={video.id} className="bg-white rounded-lg shadow-md mb-8 overflow-hidden">
           <div className="p-4 border-b">
