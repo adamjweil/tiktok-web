@@ -12,6 +12,7 @@ import {
 } from 'firebase/auth';
 import { getDatabase, Database } from 'firebase/database';
 import { getStorage, FirebaseStorage } from 'firebase/storage';
+import { getFirestore, Firestore } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -28,6 +29,7 @@ let firebaseApp: FirebaseApp;
 let firebaseAuth: Auth;
 let firebaseDatabase: Database;
 let firebaseStorage: FirebaseStorage;
+let firebaseFirestore: Firestore;
 
 if (!getApps().length) {
   try {
@@ -40,6 +42,7 @@ if (!getApps().length) {
     firebaseAuth = getAuth(firebaseApp);
     firebaseDatabase = getDatabase(firebaseApp);
     firebaseStorage = getStorage(firebaseApp);
+    firebaseFirestore = getFirestore(firebaseApp);
     
     console.log('Firebase initialized successfully');
   } catch (error) {
@@ -51,6 +54,7 @@ if (!getApps().length) {
   firebaseAuth = getAuth(firebaseApp);
   firebaseDatabase = getDatabase(firebaseApp);
   firebaseStorage = getStorage(firebaseApp);
+  firebaseFirestore = getFirestore(firebaseApp);
 }
 
 // Initialize Google Auth Provider
@@ -63,4 +67,5 @@ export const app = firebaseApp;
 export const auth = firebaseAuth;
 export const database = firebaseDatabase;
 export const storage = firebaseStorage;
+export const db = firebaseFirestore;
 export { googleProvider }; 
