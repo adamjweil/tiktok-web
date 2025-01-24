@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Fragment, useRef } from 'react';
 import { useRouter } from 'next/router';
 import { useAuth } from '../../contexts/AuthContext';
 import { database, storage } from '../../lib/firebase/config';
-import { ref as dbRef, get, set } from 'firebase/database';
+import { ref as dbRef, get, set, remove } from 'firebase/database';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import Image from 'next/image';
 import { BsFillPlayCircleFill } from 'react-icons/bs';
+import { Dialog, Transition } from '@headlessui/react';
+import FollowListModal from '../../components/FollowListModal';
 
 interface UserProfile {
   username: string;
@@ -31,6 +33,160 @@ interface VideoModalProps {
   video: Video | null;
   onClose: () => void;
 }
+
+interface EditProfileModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  profile: UserProfile;
+  onSave: (bio: string, file: File | null) => Promise<void>;
+}
+
+const EditProfileModal = ({ isOpen, onClose, profile, onSave }: EditProfileModalProps) => {
+  const [bio, setBio] = useState(profile.bio);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string>(profile.profilePicture);
+  const [loading, setLoading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setPreviewUrl(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSubmit = async () => {
+    setLoading(true);
+    try {
+      await onSave(bio, selectedFile);
+      onClose();
+    } catch (error) {
+      console.error('Error saving profile:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Transition appear show={isOpen} as={Fragment}>
+      <Dialog as="div" className="relative z-50" onClose={onClose}>
+        <Transition.Child
+          as={Fragment}
+          enter="ease-out duration-300"
+          enterFrom="opacity-0"
+          enterTo="opacity-100"
+          leave="ease-in duration-200"
+          leaveFrom="opacity-100"
+          leaveTo="opacity-0"
+        >
+          <div className="fixed inset-0 bg-black bg-opacity-25" />
+        </Transition.Child>
+
+        <div className="fixed inset-0 overflow-y-auto">
+          <div className="flex min-h-full items-center justify-center p-4">
+            <Transition.Child
+              as={Fragment}
+              enter="ease-out duration-300"
+              enterFrom="opacity-0 scale-95"
+              enterTo="opacity-100 scale-100"
+              leave="ease-in duration-200"
+              leaveFrom="opacity-100 scale-100"
+              leaveTo="opacity-0 scale-95"
+            >
+              <Dialog.Panel className="w-full max-w-md transform overflow-hidden rounded-2xl bg-white p-6 shadow-xl transition-all">
+                <Dialog.Title
+                  as="h3"
+                  className="text-2xl font-medium leading-6 text-gray-900 mb-6"
+                >
+                  Edit Profile
+                </Dialog.Title>
+
+                <div className="space-y-6">
+                  <div className="flex flex-col items-center">
+                    <div className="relative w-32 h-32 group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
+                      <Image
+                        src={previewUrl || '/default-avatar.png'}
+                        alt="Profile picture"
+                        fill
+                        className="rounded-full object-cover"
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-0 group-hover:bg-opacity-40 rounded-full transition-all">
+                        <svg 
+                          className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                          fill="none" 
+                          stroke="currentColor" 
+                          viewBox="0 0 24 24"
+                        >
+                          <path 
+                            strokeLinecap="round" 
+                            strokeLinejoin="round" 
+                            strokeWidth={2} 
+                            d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"
+                          />
+                          <path 
+                            strokeLinecap="round" 
+                            strokeLinejoin="round" 
+                            strokeWidth={2} 
+                            d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"
+                          />
+                        </svg>
+                      </div>
+                    </div>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleFileChange}
+                      className="hidden"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="bio" className="block text-sm font-medium text-gray-700 mb-1">
+                      Bio
+                    </label>
+                    <textarea
+                      id="bio"
+                      value={bio}
+                      onChange={(e) => setBio(e.target.value)}
+                      rows={4}
+                      className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                      placeholder="Tell us about yourself..."
+                    />
+                  </div>
+
+                  <div className="flex justify-end space-x-3">
+                    <button
+                      type="button"
+                      className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                      onClick={onClose}
+                      disabled={loading}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+                      onClick={handleSubmit}
+                      disabled={loading}
+                    >
+                      {loading ? 'Saving...' : 'Save Changes'}
+                    </button>
+                  </div>
+                </div>
+              </Dialog.Panel>
+            </Transition.Child>
+          </div>
+        </div>
+      </Dialog>
+    </Transition>
+  );
+};
 
 const VideoModal = ({ video, onClose }: VideoModalProps) => {
   if (!video) return null;
@@ -81,15 +237,15 @@ export default function Profile() {
   const { user } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [videos, setVideos] = useState<Video[]>([]);
-  const [isEditing, setIsEditing] = useState(false);
-  const [newBio, setNewBio] = useState('');
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [followLoading, setFollowLoading] = useState(false);
+  const [showFollowModal, setShowFollowModal] = useState<'followers' | 'following' | null>(null);
 
   useEffect(() => {
-    // Don't do anything until router is ready and we have the id
     if (!router.isReady) return;
 
     const userId = router.query.id as string;
@@ -99,21 +255,40 @@ export default function Profile() {
       return;
     }
 
+    const checkFollowStatus = async (profileId: string) => {
+      if (!user) return false;
+      const followRef = dbRef(database, `follows/${user.uid}/${profileId}`);
+      const snapshot = await get(followRef);
+      return snapshot.exists();
+    };
+
     const createDefaultProfile = async (userId: string) => {
       console.log('Creating default profile for user:', userId);
-      const defaultProfile: UserProfile = {
-        username: user?.email?.split('@')[0] || 'User',
+      const defaultProfile = {
+        name: user?.email?.split('@')[0] || 'User',
         email: user?.email || '',
-        bio: '',
-        profilePicture: '',
+        city: '',
+        state: '',
         followers: 0,
         following: 0,
+        avatarUrl: '/default-avatar.png',
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
       };
 
-      const userRef = dbRef(database, `users/${userId}`);
+      const userRef = dbRef(database, `users/${userId}/profile`);
       await set(userRef, defaultProfile);
-      return defaultProfile;
+      
+      // Return the profile in the format expected by the component
+      return {
+        username: defaultProfile.name,
+        email: defaultProfile.email,
+        bio: '',
+        profilePicture: defaultProfile.avatarUrl,
+        followers: defaultProfile.followers,
+        following: defaultProfile.following,
+        createdAt: defaultProfile.createdAt,
+      };
     };
 
     const fetchProfile = async () => {
@@ -122,19 +297,16 @@ export default function Profile() {
         setLoading(true);
         setError(null);
         
-        // Fetch user profile
-        const userRef = dbRef(database, `users/${userId}`);
+        // Fetch user profile - updated to match seed.ts structure
+        const userRef = dbRef(database, `users/${userId}/profile`);
         const snapshot = await get(userRef);
         
         let userProfile: UserProfile;
         if (!snapshot.exists()) {
           console.log('Profile does not exist, checking if current user');
-          // If profile doesn't exist and it's the current user, create a default profile
           if (user && user.uid === userId) {
             console.log('Creating default profile for current user');
             userProfile = await createDefaultProfile(userId);
-            setProfile(userProfile);
-            setNewBio(userProfile.bio);
           } else {
             console.log('Profile not found and not current user');
             setError('Profile not found');
@@ -143,21 +315,54 @@ export default function Profile() {
           }
         } else {
           console.log('Profile found:', snapshot.val());
-          userProfile = snapshot.val();
-          setProfile(userProfile);
-          setNewBio(userProfile.bio || '');
+          const userData = snapshot.val();
+          
+          // Updated to correctly map all fields from seed.ts data structure
+          userProfile = {
+            username: userData.name || userData.email?.split('@')[0] || 'User',
+            email: userData.email || '',
+            bio: userData.city && userData.state ? `${userData.city}, ${userData.state}` : '',
+            profilePicture: userData.avatarUrl || '/default-avatar.png',
+            followers: userData.followers || 0,
+            following: userData.following || 0,
+            createdAt: userData.createdAt || new Date().toISOString(),
+          };
+        }
+        
+        setProfile(userProfile);
+        
+        // Check if the current user is following this profile
+        if (user && user.uid !== userId) {
+          const following = await checkFollowStatus(userId);
+          setIsFollowing(following);
         }
 
-        // Fetch user's videos
-        const videosRef = dbRef(database, `videos/${userId}`);
-        const videosSnapshot = await get(videosRef);
+        // Fetch user's videos - updated to match seed.ts structure
+        const userVideosRef = dbRef(database, `users/${userId}/videos`);
+        const userVideosSnapshot = await get(userVideosRef);
         
-        if (videosSnapshot.exists()) {
-          const videosData = videosSnapshot.val();
-          setVideos(Object.keys(videosData).map(key => ({
-            id: key,
-            ...videosData[key]
-          })));
+        if (userVideosSnapshot.exists()) {
+          const videoIds = Object.keys(userVideosSnapshot.val());
+          const videoPromises = videoIds.map(async (videoId) => {
+            const videoRef = dbRef(database, `videos/${videoId}`);
+            const videoSnapshot = await get(videoRef);
+            if (videoSnapshot.exists()) {
+              const videoData = videoSnapshot.val();
+              return {
+                id: videoId,
+                title: videoData.title || '',
+                url: videoData.videoUrl || '',
+                thumbnail: videoData.thumbnailUrl || '/default-thumbnail.jpg',
+                likes: videoData.likes || 0,
+                comments: videoData.comments || 0,
+                createdAt: videoData.createdAt || new Date().toISOString(),
+              };
+            }
+            return null;
+          });
+
+          const videosData = await Promise.all(videoPromises);
+          setVideos(videosData.filter(video => video !== null) as Video[]);
         } else {
           setVideos([]);
         }
@@ -173,7 +378,7 @@ export default function Profile() {
     fetchProfile();
   }, [router.isReady, router.query, user]);
 
-  const handleProfileUpdate = async () => {
+  const handleProfileUpdate = async (newBio: string, file: File | null) => {
     const userId = router.query.id as string;
     if (!profile || !user || user.uid !== userId) return;
 
@@ -181,9 +386,9 @@ export default function Profile() {
       setError(null);
       let newProfilePicture = profile.profilePicture;
 
-      if (selectedFile) {
+      if (file) {
         const imageRef = storageRef(storage, `profile-pictures/${userId}`);
-        await uploadBytes(imageRef, selectedFile);
+        await uploadBytes(imageRef, file);
         newProfilePicture = await getDownloadURL(imageRef);
       }
 
@@ -196,10 +401,85 @@ export default function Profile() {
 
       await set(userRef, updatedProfile);
       setProfile(updatedProfile);
-      setIsEditing(false);
     } catch (error) {
       console.error('Error updating profile:', error);
       setError('Failed to update profile');
+    }
+  };
+
+  const handleFollow = async () => {
+    if (!user || !profile || user.uid === router.query.id) return;
+
+    const profileId = router.query.id as string;
+    setFollowLoading(true);
+
+    try {
+      const followRef = dbRef(database, `follows/${user.uid}/${profileId}`);
+      const userProfileRef = dbRef(database, `users/${profileId}/profile`);
+      const currentUserProfileRef = dbRef(database, `users/${user.uid}/profile`);
+
+      if (isFollowing) {
+        // Unfollow
+        await remove(followRef);
+        
+        // Update follower/following counts
+        const userSnapshot = await get(userProfileRef);
+        if (userSnapshot.exists()) {
+          const userProfile = userSnapshot.val();
+          await set(userProfileRef, {
+            ...userProfile,
+            followers: Math.max(0, (userProfile.followers || 0) - 1)
+          });
+        }
+
+        const currentUserSnapshot = await get(currentUserProfileRef);
+        if (currentUserSnapshot.exists()) {
+          const currentUserProfile = currentUserSnapshot.val();
+          await set(currentUserProfileRef, {
+            ...currentUserProfile,
+            following: Math.max(0, (currentUserProfile.following || 0) - 1)
+          });
+        }
+
+        setProfile(prev => prev ? {
+          ...prev,
+          followers: Math.max(0, (prev.followers || 0) - 1)
+        } : null);
+        setIsFollowing(false);
+      } else {
+        // Follow
+        await set(followRef, true);
+        
+        // Update follower/following counts
+        const userSnapshot = await get(userProfileRef);
+        if (userSnapshot.exists()) {
+          const userProfile = userSnapshot.val();
+          await set(userProfileRef, {
+            ...userProfile,
+            followers: (userProfile.followers || 0) + 1
+          });
+        }
+
+        const currentUserSnapshot = await get(currentUserProfileRef);
+        if (currentUserSnapshot.exists()) {
+          const currentUserProfile = currentUserSnapshot.val();
+          await set(currentUserProfileRef, {
+            ...currentUserProfile,
+            following: (currentUserProfile.following || 0) + 1
+          });
+        }
+
+        setProfile(prev => prev ? {
+          ...prev,
+          followers: (prev.followers || 0) + 1
+        } : null);
+        setIsFollowing(true);
+      }
+    } catch (error) {
+      console.error('Error updating follow status:', error);
+      setError('Failed to update follow status');
+    } finally {
+      setFollowLoading(false);
     }
   };
 
@@ -243,71 +523,65 @@ export default function Profile() {
           <div className="flex items-center space-x-8">
             <div className="relative w-40 h-40">
               <Image
-                src={profile.profilePicture || '/default-avatar.png'}
-                alt={profile.username}
+                src={profile?.profilePicture || '/default-avatar.png'}
+                alt={profile?.username || ''}
                 fill
                 className="rounded-full object-cover ring-4 ring-gray-50"
               />
             </div>
             <div className="flex-1">
-              <h1 className="text-3xl font-bold text-gray-900">{profile.username}</h1>
-              {isEditing ? (
-                <textarea
-                  value={newBio}
-                  onChange={(e) => setNewBio(e.target.value)}
-                  className="w-full p-3 border rounded-lg mt-3 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                  placeholder="Write your bio..."
-                  rows={3}
-                />
-              ) : (
-                <p className="text-gray-600 mt-3 text-lg">{profile.bio || 'No bio yet'}</p>
-              )}
+              <h1 className="text-3xl font-bold text-gray-900">{profile?.username}</h1>
+              <p className="text-gray-600 mt-3 text-lg">{profile?.bio || 'No bio yet'}</p>
               <div className="flex space-x-6 mt-4">
-                <div className="text-center">
-                  <span className="block text-2xl font-bold text-gray-900">{profile.followers}</span>
+                <button 
+                  onClick={() => setShowFollowModal('followers')}
+                  className="text-center cursor-pointer hover:bg-gray-50 rounded-lg px-3 py-2 transition-colors"
+                >
+                  <span className="block text-2xl font-bold text-gray-900">{profile?.followers}</span>
                   <span className="text-gray-500">followers</span>
-                </div>
-                <div className="text-center">
-                  <span className="block text-2xl font-bold text-gray-900">{profile.following}</span>
+                </button>
+                <button
+                  onClick={() => setShowFollowModal('following')}
+                  className="text-center cursor-pointer hover:bg-gray-50 rounded-lg px-3 py-2 transition-colors"
+                >
+                  <span className="block text-2xl font-bold text-gray-900">{profile?.following}</span>
                   <span className="text-gray-500">following</span>
+                </button>
+                <div className="text-center px-3 py-2">
+                  <span className="block text-2xl font-bold text-gray-900">{videos.length}</span>
+                  <span className="text-gray-500">videos</span>
                 </div>
               </div>
             </div>
-            {user && user.uid === router.query.id && (
-              <div>
-                {isEditing ? (
-                  <div className="space-y-3">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
-                      className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
-                    />
-                    <div className="flex space-x-2">
-                      <button
-                        onClick={handleProfileUpdate}
-                        className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition-colors"
-                      >
-                        Save
-                      </button>
-                      <button
-                        onClick={() => setIsEditing(false)}
-                        className="bg-gray-100 text-gray-700 px-6 py-2 rounded-lg hover:bg-gray-200 transition-colors"
-                      >
-                        Cancel
-                      </button>
+            <div className="flex space-x-4">
+              {user && user.uid === router.query.id ? (
+                <button
+                  onClick={() => setIsEditModalOpen(true)}
+                  className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition-colors"
+                >
+                  Edit Profile
+                </button>
+              ) : user && (
+                <button
+                  onClick={handleFollow}
+                  disabled={followLoading}
+                  className={`px-6 py-2 rounded-lg transition-colors ${
+                    isFollowing 
+                      ? 'bg-gray-100 text-gray-700 hover:bg-gray-200' 
+                      : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                  } disabled:opacity-50`}
+                >
+                  {followLoading ? (
+                    <div className="flex items-center">
+                      <div className="w-4 h-4 border-2 border-gray-200 border-t-indigo-600 rounded-full animate-spin mr-2"></div>
+                      {isFollowing ? 'Unfollowing...' : 'Following...'}
                     </div>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => setIsEditing(true)}
-                    className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition-colors"
-                  >
-                    Edit Profile
-                  </button>
-                )}
-              </div>
-            )}
+                  ) : (
+                    isFollowing ? 'Unfollow' : 'Follow'
+                  )}
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -382,12 +656,37 @@ export default function Profile() {
         </div>
       </div>
 
+      {profile && (
+        <EditProfileModal
+          isOpen={isEditModalOpen}
+          onClose={() => setIsEditModalOpen(false)}
+          profile={profile}
+          onSave={handleProfileUpdate}
+        />
+      )}
+
       {selectedVideo && (
         <VideoModal
           video={selectedVideo}
           onClose={() => setSelectedVideo(null)}
         />
       )}
+
+      {/* Add the modals */}
+      <FollowListModal
+        isOpen={showFollowModal === 'followers'}
+        onClose={() => setShowFollowModal(null)}
+        userId={router.query.id as string}
+        type="followers"
+        title="Followers"
+      />
+      <FollowListModal
+        isOpen={showFollowModal === 'following'}
+        onClose={() => setShowFollowModal(null)}
+        userId={router.query.id as string}
+        type="following"
+        title="Following"
+      />
     </div>
   );
 } 

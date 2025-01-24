@@ -29,16 +29,19 @@ export default function Users() {
         if (snapshot.exists()) {
           const usersData = snapshot.val();
           const formattedUsers = Object.entries(usersData)
-            .map(([uid, data]: [string, any]) => ({
-              uid,
-              profile: data.profile || {
-                name: 'Unknown User',
-                avatarUrl: '/default-avatar.png',
-                followers: 0,
-                following: 0
-              }
-            }))
-            .filter(user => user.profile && user.profile.name); // Only include users with valid profiles
+            .map(([uid, data]: [string, any]) => {
+              // Ensure we have a valid profile object
+              const profile = data.profile || {};
+              return {
+                uid,
+                profile: {
+                  name: profile.name || 'Unknown User',
+                  avatarUrl: profile.avatarUrl || '/default-avatar.png',
+                  followers: profile.followers || 0,
+                  following: profile.following || 0
+                }
+              };
+            });
           setUsers(formattedUsers);
         }
       } catch (error) {
@@ -52,7 +55,7 @@ export default function Users() {
   }, []);
 
   const filteredUsers = users.filter(user => 
-    user.profile?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false
+    user.profile.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
@@ -100,19 +103,19 @@ export default function Users() {
                   <div className="flex items-center space-x-4">
                     <div className="relative w-16 h-16">
                       <Image
-                        src={user.profile?.avatarUrl || '/default-avatar.png'}
-                        alt={user.profile?.name || 'Unknown User'}
+                        src={user.profile.avatarUrl}
+                        alt={user.profile.name}
                         fill
                         className="rounded-full object-cover"
                       />
                     </div>
                     <div>
                       <h2 className="text-lg font-semibold text-gray-900">
-                        {user.profile?.name || 'Unknown User'}
+                        {user.profile.name}
                       </h2>
                       <div className="flex space-x-4 text-sm text-gray-500 mt-1">
-                        <span>{user.profile?.followers || 0} followers</span>
-                        <span>{user.profile?.following || 0} following</span>
+                        <span>{user.profile.followers} followers</span>
+                        <span>{user.profile.following} following</span>
                       </div>
                     </div>
                   </div>
