@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter } from 'next/router';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -91,11 +92,14 @@ export default function Navigation() {
         <div className="mt-auto pt-4 border-t border-gray-200">
           <div className="flex items-center justify-between px-4 py-2">
             <div className="flex items-center">
-              <img
-                src={user.photoURL || '/default-avatar.png'}
-                alt={user.displayName || 'User'}
-                className="w-8 h-8 rounded-full object-cover"
-              />
+              <div className="relative w-8 h-8">
+                <Image
+                  src={user.photoURL || '/default-avatar.png'}
+                  alt={user.displayName || 'User'}
+                  fill
+                  className="rounded-full object-cover"
+                />
+              </div>
               <span className="ml-2 font-medium text-sm text-gray-700">
                 {user.displayName || 'User'}
               </span>
