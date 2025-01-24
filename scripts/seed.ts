@@ -3,7 +3,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
-import { getDatabase, ref, set } from 'firebase/database';
+import { getDatabase, ref, set, remove } from 'firebase/database';
 import { faker } from '@faker-js/faker';
 
 // Load environment variables
@@ -25,6 +25,30 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app);
+
+// Sample video data with real URLs
+const sampleVideos = [
+  {
+    videoUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+    thumbnailUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/images/ForBiggerBlazes.jpg',
+  },
+  {
+    videoUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
+    thumbnailUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/images/ForBiggerEscapes.jpg',
+  },
+  {
+    videoUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4',
+    thumbnailUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/images/ForBiggerFun.jpg',
+  },
+  {
+    videoUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4',
+    thumbnailUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/images/ForBiggerJoyrides.jpg',
+  },
+  {
+    videoUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4',
+    thumbnailUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/images/ForBiggerMeltdowns.jpg',
+  },
+];
 
 async function createUserWithProfile(index: number) {
   const timestamp = Date.now();
@@ -53,15 +77,16 @@ async function createUserWithProfile(index: number) {
     // Save profile to Realtime Database
     await set(ref(db, `users/${uid}/profile`), profile);
 
-    // Create 10 videos for the user
-    for (let i = 0; i < 10; i++) {
+    // Create 5 videos for the user using real sample videos
+    for (let i = 0; i < 5; i++) {
       const videoId = faker.string.uuid();
+      const sampleVideo = sampleVideos[i % sampleVideos.length];
       const video = {
         id: videoId,
         title: faker.lorem.sentence(),
         description: faker.lorem.paragraph(),
-        videoUrl: `https://storage.example.com/videos/${videoId}.mp4`,
-        thumbnailUrl: '/default-thumbnail.jpg',
+        videoUrl: sampleVideo.videoUrl,
+        thumbnailUrl: sampleVideo.thumbnailUrl,
         likes: faker.number.int({ min: 0, max: 1000 }),
         comments: faker.number.int({ min: 0, max: 100 }),
         shares: faker.number.int({ min: 0, max: 500 }),
@@ -73,14 +98,30 @@ async function createUserWithProfile(index: number) {
       await set(ref(db, `users/${uid}/videos/${videoId}`), true);
     }
 
-    console.log(`Created user ${index + 1} with profile and 10 videos`);
+    console.log(`Created user ${index + 1} with profile and 5 videos`);
   } catch (error) {
     console.error(`Error creating user ${index + 1}:`, error);
   }
 }
 
+async function clearDatabase() {
+  console.log('Clearing existing database...');
+  try {
+    // Remove all data from the main nodes
+    await remove(ref(db, 'users'));
+    await remove(ref(db, 'videos'));
+    console.log('Database cleared successfully');
+  } catch (error) {
+    console.error('Error clearing database:', error);
+    throw error;
+  }
+}
+
 async function main() {
-  console.log('Starting seed...');
+  console.log('Starting seed process...');
+
+  // Clear existing data first
+  await clearDatabase();
 
   // Create 10 users with profiles and videos
   const promises = Array.from({ length: 10 }, (_, i) => createUserWithProfile(i));

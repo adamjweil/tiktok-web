@@ -7,10 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "seed": "ts-node-esm scripts/seed.mts"
+    "seed": "cross-env NODE_OPTIONS=\"--loader ts-node/esm\" ts-node --esm scripts/seed.ts"
   },
   "dependencies": {
     "@firebasegen/default-connector": "file:dataconnect-generated/js/default-connector",
+    "@headlessui/react": "^2.2.0",
     "dotenv": "^16.4.7",
     "firebase": "^11.2.0",
     "firebase-admin": "^13.0.2",
@@ -26,6 +27,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "cross-env": "^7.0.3",
     "eslint": "^9",
     "eslint-config-next": "15.1.6",
     "postcss": "^8",
