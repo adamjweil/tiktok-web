@@ -81,6 +81,50 @@ const sampleVideos = [
   },
 ];
 
+// Add these arrays near the top of the file, after sampleVideos
+const videoThemes = [
+  {
+    title: "My First Day Living in New York City",
+    description: "Follow along as I explore my new neighborhood, try some amazing local restaurants, and share my initial impressions of city life. Can't believe I finally made the move!"
+  },
+  {
+    title: "How I Learned to Cook Italian Food from My Grandmother",
+    description: "Spending time in the kitchen with my nonna learning her secret family recipes. She shares her traditional techniques for making the perfect pasta from scratch."
+  },
+  {
+    title: "A Day in the Life of a Software Engineer",
+    description: "Ever wondered what software engineers actually do all day? Here's an honest look at my typical workday, from morning standup to debugging sessions."
+  },
+  {
+    title: "Road Trip Through California's Coast",
+    description: "Driving down the Pacific Coast Highway, stopping at hidden beaches, and camping under the stars. The views along Big Sur were absolutely incredible!"
+  },
+  {
+    title: "My Morning Routine for Productivity",
+    description: "Sharing the morning habits that help me stay focused and energized throughout the day. From meditation to exercise, these small changes made a huge difference."
+  },
+  {
+    title: "Urban Garden Tour: Growing Food in Small Spaces",
+    description: "A tour of my balcony garden where I grow vegetables and herbs in containers. Proving you don't need a huge backyard to grow your own food!"
+  },
+  {
+    title: "Learning to Play Guitar: 6 Months Progress",
+    description: "Documenting my journey from complete beginner to being able to play my favorite songs. Including practice tips and the challenges I faced along the way."
+  },
+  {
+    title: "Weekend in Paris: Local's Guide",
+    description: "Exploring Paris beyond the tourist spots. Discovering hidden cafes, local markets, and authentic neighborhoods that most visitors never see."
+  },
+  {
+    title: "How I Built My Own Photography Studio",
+    description: "Converting my spare room into a professional photography studio on a budget. Sharing all the equipment choices and setup details."
+  },
+  {
+    title: "Making Sourdough Bread from Scratch",
+    description: "A step-by-step guide to creating your own sourdough starter and baking beautiful artisan bread at home. Warning: this might make you hungry!"
+  }
+];
+
 // Generate a random avatar URL using UI Faces
 const getRandomAvatarUrl = () => {
   // pravatar.cc has images from 1-70
@@ -178,10 +222,11 @@ async function createUserWithProfile(index: number, allUserIds: string[] = []) {
       const sampleVideo = sampleVideos[i % sampleVideos.length];
       
       // Create the video without likes/comments counts initially
+      const theme = videoThemes[i % videoThemes.length];
       const video = {
         id: videoId,
-        title: faker.lorem.sentence(),
-        description: faker.lorem.paragraph(),
+        title: theme.title,
+        description: theme.description,
         videoUrl: sampleVideo.videoUrl,
         thumbnailUrl: sampleVideo.thumbnailUrl,
         userId: uid,
@@ -294,10 +339,11 @@ async function createAdamAccount() {
       const sampleVideo = sampleVideos[i % sampleVideos.length];
       
       // Create the video without likes/comments counts initially
+      const theme = videoThemes[i % videoThemes.length];
       const video = {
         id: videoId,
-        title: faker.lorem.sentence(),
-        description: faker.lorem.paragraph(),
+        title: theme.title,
+        description: theme.description,
         videoUrl: sampleVideo.videoUrl,
         thumbnailUrl: sampleVideo.thumbnailUrl,
         userId: uid,

@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useUploadModal } from '../contexts/UploadModalContext';
+import SearchBar from '../components/SearchBar';
 
 interface Video {
   id: string;
@@ -30,6 +31,15 @@ interface Comment {
   userImage: string;
   text: string;
   createdAt: number;
+}
+
+interface SearchResultType {
+  id: string;
+  title: string;
+  videoUrl: string;
+  thumbnailUrl: string;
+  userId: string;
+  username: string;
 }
 
 export default function Home() {
@@ -253,7 +263,9 @@ export default function Home() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    <div className="container mx-auto px-4 pt-2 pb-4">
+      <SearchBar />
+      
       {user && (
         <button
           onClick={openUploadModal}

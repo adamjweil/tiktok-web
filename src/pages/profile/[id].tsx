@@ -3,11 +3,14 @@ import { useRouter } from 'next/router';
 import { useAuth } from '../../contexts/AuthContext';
 import { database, storage } from '../../lib/firebase/config';
 import { ref as dbRef, get, set, remove } from 'firebase/database';
-import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import Image from 'next/image';
 import { BsFillPlayCircleFill } from 'react-icons/bs';
 import { Dialog, Transition } from '@headlessui/react';
 import FollowListModal from '../../components/FollowListModal';
+import VideoCard from '../../components/VideoCard';
+import Link from 'next/link';
+import UploadModal from '../../components/UploadModal';
 
 interface UserProfile {
   username: string;
@@ -21,11 +24,15 @@ interface UserProfile {
 
 interface Video {
   id: string;
-  title: string;
-  url: string;
-  thumbnail: string;
+  userId: string;
+  caption: string;
+  videoUrl: string;
+  thumbnailUrl: string;
   likes: number;
   comments: number;
+  views: number;
+  username: string;
+  userImage: string;
   createdAt: string;
 }
 
@@ -207,11 +214,11 @@ const VideoModal = ({ video, onClose }: VideoModalProps) => {
             className="w-full h-full rounded-t-lg"
             controls
             autoPlay
-            src={video.url}
+            src={video.videoUrl}
           />
         </div>
         <div className="p-4">
-          <h3 className="text-xl font-semibold text-gray-900">{video.title}</h3>
+          <h3 className="text-xl font-semibold text-gray-900">{video.caption}</h3>
           <div className="flex items-center space-x-4 mt-2 text-gray-600">
             <span className="flex items-center">
               <svg className="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -244,6 +251,7 @@ export default function Profile() {
   const [isFollowing, setIsFollowing] = useState(false);
   const [followLoading, setFollowLoading] = useState(false);
   const [showFollowModal, setShowFollowModal] = useState<'followers' | 'following' | null>(null);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
 
   useEffect(() => {
     if (!router.isReady) return;
@@ -297,7 +305,7 @@ export default function Profile() {
         setLoading(true);
         setError(null);
         
-        // Fetch user profile - updated to match seed.ts structure
+        // Fetch user profile
         const userRef = dbRef(database, `users/${userId}/profile`);
         const snapshot = await get(userRef);
         
@@ -317,7 +325,6 @@ export default function Profile() {
           console.log('Profile found:', snapshot.val());
           const userData = snapshot.val();
           
-          // Updated to correctly map all fields from seed.ts data structure
           userProfile = {
             username: userData.name || userData.email?.split('@')[0] || 'User',
             email: userData.email || '',
@@ -337,41 +344,56 @@ export default function Profile() {
           setIsFollowing(following);
         }
 
-        // Fetch user's videos - updated to match seed.ts structure
-        const userVideosRef = dbRef(database, `users/${userId}/videos`);
-        const userVideosSnapshot = await get(userVideosRef);
-        
-        if (userVideosSnapshot.exists()) {
-          const videoIds = Object.keys(userVideosSnapshot.val());
-          const videoPromises = videoIds.map(async (videoId) => {
-            const videoRef = dbRef(database, `videos/${videoId}`);
-            const videoSnapshot = await get(videoRef);
-            if (videoSnapshot.exists()) {
-              const videoData = videoSnapshot.val();
-              return {
-                id: videoId,
-                title: videoData.title || '',
-                url: videoData.videoUrl || '',
-                thumbnail: videoData.thumbnailUrl || '/default-thumbnail.jpg',
-                likes: videoData.likes || 0,
-                comments: videoData.comments || 0,
-                createdAt: videoData.createdAt || new Date().toISOString(),
-              };
-            }
-            return null;
-          });
-
-          const videosData = await Promise.all(videoPromises);
-          setVideos(videosData.filter(video => video !== null) as Video[]);
-        } else {
-          setVideos([]);
-        }
+        // Fetch videos directly from the videos collection and filter by userId
+        await fetchVideos(userId);
 
       } catch (error) {
         console.error('Error fetching profile:', error);
         setError('Error loading profile');
       } finally {
         setLoading(false);
+      }
+    };
+
+    const fetchVideos = async (userId: string) => {
+      try {
+        const videosRef = dbRef(database, 'videos');
+        const snapshot = await get(videosRef);
+        const videosData = snapshot.val();
+
+        if (!videosData) {
+          setVideos([]);
+          return;
+        }
+
+        console.log('Raw videos data:', videosData);
+
+        // Filter videos by userId and map to Video type
+        const userVideos = Object.entries(videosData)
+          .filter(([_, video]: [string, any]) => video.userId === userId)
+          .map(([id, videoData]: [string, any]) => {
+            console.log('Processing video:', id, videoData);
+            return {
+              id,
+              userId: videoData.userId,
+              caption: videoData.title || videoData.caption || '',  // Try both title and caption
+              videoUrl: videoData.videoUrl || '',
+              thumbnailUrl: videoData.thumbnailUrl || '/images/default-thumbnail.svg',
+              likes: parseInt(videoData.likes) || 0,
+              comments: parseInt(videoData.comments) || 0,
+              views: parseInt(videoData.views) || 0,
+              username: videoData.username || profile?.username || 'Anonymous',
+              userImage: videoData.userImage || profile?.profilePicture || '/default-avatar.png',
+              createdAt: videoData.createdAt || new Date().toISOString()
+            };
+          })
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+        console.log('Processed videos:', userVideos);
+        setVideos(userVideos);
+      } catch (error) {
+        console.error('Error fetching videos:', error);
+        setError('Failed to load videos');
       }
     };
 
@@ -483,6 +505,85 @@ export default function Profile() {
     }
   };
 
+  const handleDeleteVideo = async (videoId: string, videoUrl: string) => {
+    if (!user || user.uid !== router.query.id) return;
+
+    try {
+      // Delete video metadata from database first
+      await remove(dbRef(database, `videos/${videoId}`));
+      
+      // Delete video reference from user's videos
+      await remove(dbRef(database, `users/${user.uid}/videos/${videoId}`));
+
+      // Only try to delete from storage if it's a Firebase Storage URL
+      if (videoUrl.includes('firebasestorage.googleapis.com')) {
+        try {
+          const match = videoUrl.match(/o\/(.*?)\?/);
+          if (match) {
+            const encodedPath = match[1];
+            const fullPath = decodeURIComponent(encodedPath);
+            console.log('Deleting video from storage at path:', fullPath);
+            const videoRef = storageRef(storage, fullPath);
+            await deleteObject(videoRef);
+          }
+        } catch (storageError) {
+          console.error('Error deleting from storage:', storageError);
+          // Continue with the function even if storage deletion fails
+        }
+      } else {
+        console.log('Skipping storage deletion for seeded video:', videoUrl);
+      }
+
+      // Update local state
+      setVideos(prevVideos => prevVideos.filter(v => v.id !== videoId));
+      console.log('Video deleted successfully');
+    } catch (error) {
+      console.error('Error deleting video:', error);
+    }
+  };
+
+  const refreshVideos = async () => {
+    if (!router.query.id) return;
+    
+    try {
+      console.log('Starting video refresh...');
+      const videosRef = dbRef(database, 'videos');
+      const snapshot = await get(videosRef);
+      const videosData = snapshot.val();
+
+      if (!videosData) {
+        console.log('No videos found, setting empty array');
+        setVideos([]);
+        return;
+      }
+
+      console.log('Refreshing videos data:', videosData);
+
+      // Filter videos by userId and map to Video type
+      const userVideos = Object.entries(videosData)
+        .filter(([_, video]: [string, any]) => video.userId === router.query.id)
+        .map(([id, videoData]: [string, any]) => ({
+          id,
+          userId: videoData.userId,
+          caption: videoData.title || videoData.caption || '',
+          videoUrl: videoData.videoUrl || '',
+          thumbnailUrl: videoData.thumbnailUrl || '/images/default-thumbnail.svg',
+          likes: parseInt(videoData.likes) || 0,
+          comments: parseInt(videoData.comments) || 0,
+          views: parseInt(videoData.views) || 0,
+          username: videoData.username || profile?.username || 'Anonymous',
+          userImage: videoData.userImage || profile?.profilePicture || '/default-avatar.png',
+          createdAt: videoData.createdAt || new Date().toISOString()
+        }))
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+      console.log('Setting videos state with:', userVideos);
+      setVideos(userVideos);
+    } catch (error) {
+      console.error('Error refreshing videos:', error);
+    }
+  };
+
   if (!router.isReady) {
     return (
       <div className="flex justify-center items-center min-h-screen">
@@ -555,12 +656,20 @@ export default function Profile() {
             </div>
             <div className="flex space-x-4">
               {user && user.uid === router.query.id ? (
-                <button
-                  onClick={() => setIsEditModalOpen(true)}
-                  className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition-colors"
-                >
-                  Edit Profile
-                </button>
+                <>
+                  <button
+                    onClick={() => setIsEditModalOpen(true)}
+                    className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition-colors"
+                  >
+                    Edit Profile
+                  </button>
+                  <button
+                    onClick={() => setIsUploadModalOpen(true)}
+                    className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition-colors"
+                  >
+                    Upload Video
+                  </button>
+                </>
               ) : user && (
                 <button
                   onClick={handleFollow}
@@ -591,56 +700,52 @@ export default function Profile() {
           {videos.length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {videos.map((video) => (
-                <div 
-                  key={video.id} 
-                  className="group relative bg-gray-100 rounded-xl overflow-hidden shadow-sm hover:shadow-lg transition-shadow duration-300"
-                >
-                  <div className="relative aspect-video bg-gray-100">
-                    {video.thumbnail ? (
-                      <Image
-                        src={video.thumbnail}
-                        alt={video.title}
-                        fill
-                        className="object-cover"
-                        priority
-                      />
-                    ) : (
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <BsFillPlayCircleFill className="w-20 h-20 text-gray-400" />
+                <div key={video.id} className="relative group bg-white rounded-lg shadow-sm overflow-hidden">
+                  {/* Video with thumbnail */}
+                  <div className="relative pt-[56.25%]">
+                    <video
+                      src={video.videoUrl}
+                      className="absolute top-0 left-0 w-full h-full object-cover"
+                      controls
+                      playsInline
+                      poster={video.thumbnailUrl || '/images/default-thumbnail.svg'}
+                    />
+                  </div>
+
+                  {/* Video info */}
+                  <div className="p-3">
+                    <h2 className="text-sm font-semibold mb-1 line-clamp-1">{video.caption}</h2>
+                    <div className="flex items-center justify-between text-sm">
+                      <div className="flex items-center space-x-1 text-gray-600">
+                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                        </svg>
+                        <span className="text-xs">{video.likes || 0}</span>
                       </div>
-                    )}
-                    {/* Hover Overlay */}
-                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-40 transition-opacity duration-300 flex items-center justify-center">
-                      <div className="opacity-0 group-hover:opacity-100 transform translate-y-4 group-hover:translate-y-0 transition-all duration-300">
-                        <button 
-                          onClick={() => setSelectedVideo(video)}
-                          className="bg-white text-gray-900 px-6 py-2 rounded-full font-medium hover:bg-gray-100"
-                        >
-                          Watch Now
-                        </button>
+                      <div className="flex items-center space-x-1 text-gray-600">
+                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                        </svg>
+                        <span className="text-xs">{video.comments || 0}</span>
                       </div>
                     </div>
                   </div>
-                  <div className="p-4">
-                    <h3 className="font-semibold text-lg text-gray-900 mb-2">{video.title}</h3>
-                    <div className="flex items-center justify-between text-sm text-gray-500">
-                      <div className="flex items-center space-x-4">
-                        <span className="flex items-center">
-                          <svg className="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-                          </svg>
-                          {video.likes}
-                        </span>
-                        <span className="flex items-center">
-                          <svg className="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                          </svg>
-                          {video.comments}
-                        </span>
-                      </div>
-                      <span className="text-gray-400">{new Date(video.createdAt).toLocaleDateString()}</span>
-                    </div>
-                  </div>
+
+                  {/* Delete button */}
+                  {user?.uid === video.userId && (
+                    <button
+                      onClick={() => {
+                        if (window.confirm('Are you sure you want to delete this video?')) {
+                          handleDeleteVideo(video.id, video.videoUrl);
+                        }
+                      }}
+                      className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-all hover:bg-red-600 z-10"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -686,6 +791,13 @@ export default function Profile() {
         userId={router.query.id as string}
         type="following"
         title="Following"
+      />
+
+      {/* Add UploadModal */}
+      <UploadModal
+        isOpen={isUploadModalOpen}
+        onClose={() => setIsUploadModalOpen(false)}
+        onVideoUploaded={refreshVideos}
       />
     </div>
   );

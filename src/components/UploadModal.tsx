@@ -1,4 +1,4 @@
-import { useState, useCallback, Fragment } from 'react';
+import { useState, useCallback, Fragment, useRef } from 'react';
 import { Dialog, Transition } from '@headlessui/react';
 import { useAuth } from '../contexts/AuthContext';
 import { storage, database } from '../lib/firebase/config';
@@ -10,19 +10,24 @@ interface UploadModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
+  onVideoUploaded?: () => void;
 }
 
-export default function UploadModal({ isOpen, onClose, onSuccess }: UploadModalProps) {
+export default function UploadModal({ isOpen, onClose, onSuccess, onVideoUploaded }: UploadModalProps) {
   const [uploading, setUploading] = useState(false);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [error, setError] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [thumbnailBlob, setThumbnailBlob] = useState<Blob | null>(null);
   const { user } = useAuth();
 
   const resetForm = () => {
     setTitle('');
     setDescription('');
     setError('');
+    setSelectedFile(null);
+    setThumbnailBlob(null);
   };
 
   const handleClose = () => {
@@ -32,44 +37,112 @@ export default function UploadModal({ isOpen, onClose, onSuccess }: UploadModalP
     }
   };
 
+  const generateThumbnail = async (file: File): Promise<Blob | null> => {
+    return new Promise((resolve) => {
+      const video = document.createElement('video');
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+
+      video.autoplay = true;
+      video.muted = true;
+      video.src = URL.createObjectURL(file);
+
+      video.onloadeddata = () => {
+        // Set canvas size to match video dimensions
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+
+        // Draw the first frame
+        context?.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        // Convert to blob
+        canvas.toBlob((blob) => {
+          // Clean up
+          URL.revokeObjectURL(video.src);
+          resolve(blob);
+        }, 'image/jpeg', 0.7);
+      };
+
+      video.onerror = () => {
+        console.error('Error generating thumbnail');
+        URL.revokeObjectURL(video.src);
+        resolve(null);
+      };
+    });
+  };
+
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
-    if (!user) {
-      setError('Please sign in to upload videos');
-      return;
-    }
+    try {
+      if (!user) {
+        setError('Please sign in to upload videos');
+        return;
+      }
 
-    const file = acceptedFiles[0];
-    if (!file) return;
+      const file = acceptedFiles[0];
+      if (!file) {
+        setError('No file selected');
+        return;
+      }
 
-    if (!file.type.startsWith('video/')) {
-      setError('Please upload a video file');
-      return;
-    }
+      if (!file.type.startsWith('video/')) {
+        setError('Please upload a video file');
+        return;
+      }
 
-    if (file.size > 100 * 1024 * 1024) { // 100MB limit
-      setError('Video size should be less than 100MB');
-      return;
+      if (file.size > 100 * 1024 * 1024) {
+        setError('Video size should be less than 100MB');
+        return;
+      }
+
+      // Generate thumbnail when file is selected
+      const thumbnail = await generateThumbnail(file);
+      setThumbnailBlob(thumbnail);
+
+      // Store the selected file
+      setSelectedFile(file);
+      setError('');
+    } catch (err) {
+      console.error('Error selecting file:', err);
+      setError(err instanceof Error ? err.message : 'Failed to select video. Please try again.');
     }
+  }, [user]);
+
+  const handleUpload = async () => {
+    if (!selectedFile || !user) return;
 
     try {
       setUploading(true);
       setError('');
 
       // Upload video
-      const videoFileName = `${Date.now()}-${file.name}`;
+      const videoFileName = `${Date.now()}-${selectedFile.name}`;
       const videoRef = storageRef(storage, `videos/${user.uid}/${videoFileName}`);
-      await uploadBytes(videoRef, file);
+      
+      console.log('Starting video upload...');
+      await uploadBytes(videoRef, selectedFile);
+      console.log('Video uploaded successfully');
+      
       const videoUrl = await getDownloadURL(videoRef);
+      console.log('Video URL retrieved');
 
-      // Generate thumbnail (in production, you'd want to do this server-side)
-      const thumbnailUrl = '/default-thumbnail.jpg'; // Placeholder
+      // Upload thumbnail if available
+      let thumbnailUrl = '/images/default-thumbnail.svg';
+      if (thumbnailBlob) {
+        const thumbnailFileName = `${Date.now()}-thumbnail.jpg`;
+        const thumbnailRef = storageRef(storage, `thumbnails/${user.uid}/${thumbnailFileName}`);
+        await uploadBytes(thumbnailRef, thumbnailBlob);
+        thumbnailUrl = await getDownloadURL(thumbnailRef);
+        console.log('Thumbnail uploaded successfully');
+      }
 
       // Save video metadata to database
       const videosRef = dbRef(database, 'videos');
       const newVideoRef = push(videosRef);
+      
+      console.log('Saving video metadata to database...');
       await set(newVideoRef, {
         id: newVideoRef.key,
-        title: title || file.name,
+        title: title || selectedFile.name,
         description,
         videoUrl,
         thumbnailUrl,
@@ -82,16 +155,27 @@ export default function UploadModal({ isOpen, onClose, onSuccess }: UploadModalP
         shares: 0
       });
 
-      resetForm();
+      // Also save reference to video in user's videos collection
+      await set(dbRef(database, `users/${user.uid}/videos/${newVideoRef.key}`), true);
+
+      console.log('Upload completed successfully');
+      
+      // Call callbacks and close modal
+      if (onVideoUploaded) {
+        console.log('Calling onVideoUploaded callback');
+        await onVideoUploaded();
+      }
       if (onSuccess) onSuccess();
+      
+      resetForm();
       handleClose();
     } catch (err) {
-      console.error('Error uploading video:', err);
-      setError('Failed to upload video');
+      console.error('Error during upload process:', err);
+      setError(err instanceof Error ? err.message : 'Failed to upload video. Please try again.');
     } finally {
       setUploading(false);
     }
-  }, [user, title, description, onSuccess, onClose]);
+  };
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -99,6 +183,7 @@ export default function UploadModal({ isOpen, onClose, onSuccess }: UploadModalP
       'video/*': ['.mp4', '.mov', '.avi', '.webm']
     },
     maxFiles: 1,
+    multiple: false,
   });
 
   return (
@@ -176,35 +261,30 @@ export default function UploadModal({ isOpen, onClose, onSuccess }: UploadModalP
                     }`}
                   >
                     <input {...getInputProps()} />
-                    {uploading ? (
-                      <div>
-                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500 mx-auto"></div>
-                        <p className="mt-4 text-gray-600">Uploading video...</p>
-                      </div>
-                    ) : (
-                      <div>
-                        <svg
-                          className="mx-auto h-12 w-12 text-gray-400"
-                          stroke="currentColor"
-                          fill="none"
-                          viewBox="0 0 48 48"
-                          aria-hidden="true"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M8 14v20c0 4.418 3.582 8 8 8h16c4.418 0 8-3.582 8-8V14m-4 0l-8-8-8 8m8-8v28"
-                          />
-                        </svg>
-                        <p className="mt-4 text-gray-600">
-                          {isDragActive
-                            ? "Drop the video here"
+                    <div>
+                      <svg
+                        className="mx-auto h-12 w-12 text-gray-400"
+                        stroke="currentColor"
+                        fill="none"
+                        viewBox="0 0 48 48"
+                        aria-hidden="true"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M8 14v20c0 4.418 3.582 8 8 8h16c4.418 0 8-3.582 8-8V14m-4 0l-8-8-8 8m8-8v28"
+                        />
+                      </svg>
+                      <p className="mt-4 text-gray-600">
+                        {isDragActive
+                          ? "Drop the video here"
+                          : selectedFile 
+                            ? `Selected: ${selectedFile.name}`
                             : "Drag and drop a video, or click to select"}
-                        </p>
-                        <p className="mt-2 text-sm text-gray-500">MP4, MOV, AVI, or WebM up to 100MB</p>
-                      </div>
-                    )}
+                      </p>
+                      <p className="mt-2 text-sm text-gray-500">MP4, MOV, AVI, or WebM up to 100MB</p>
+                    </div>
                   </div>
 
                   <div className="flex justify-end space-x-3">
@@ -216,6 +296,16 @@ export default function UploadModal({ isOpen, onClose, onSuccess }: UploadModalP
                     >
                       Cancel
                     </button>
+                    {selectedFile && (
+                      <button
+                        type="button"
+                        className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                        onClick={handleUpload}
+                        disabled={uploading}
+                      >
+                        {uploading ? 'Uploading...' : 'Upload Video'}
+                      </button>
+                    )}
                   </div>
                 </div>
               </Dialog.Panel>

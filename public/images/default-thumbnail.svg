@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1280" height="720" version="1.1" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1280" height="720" fill="#f3f4f6"/>
+  <g transform="translate(590,310)" fill="#9ca3af">
+    <circle cx="50" cy="50" r="40"/>
+    <polygon points="35,35 35,65 70,50" fill="#f3f4f6"/>
+  </g>
+  <text x="640" y="450" text-anchor="middle" fill="#6b7280" font-family="system-ui" font-size="24">
+    Video Thumbnail
+  </text>
+</svg> 
