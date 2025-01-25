@@ -18,7 +18,8 @@ import { useLikeVideo, useIncrementViews } from '../../hooks/useVideos';
 interface ProfileVideo {
   id: string;
   userId: string;
-  caption: string;
+  title: string;
+  description: string;
   videoUrl: string;
   thumbnailUrl: string;
   likes: number;
@@ -223,7 +224,8 @@ const VideoModal = ({ video, onClose }: VideoModalProps) => {
           />
         </div>
         <div className="p-4">
-          <h3 className="text-xl font-semibold text-gray-900">{video.caption}</h3>
+          <h3 className="text-xl font-semibold text-gray-900">{video.title}</h3>
+          <p className="text-gray-600 mt-2 text-lg">{video.description}</p>
           <div className="flex items-center space-x-4 mt-2 text-gray-600">
             <span className="flex items-center">
               <svg className="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -433,7 +435,8 @@ export default function Profile() {
                     </div>
 
                     <div className="p-3">
-                      <h2 className="text-sm font-semibold mb-1 line-clamp-1">{typedVideo.caption}</h2>
+                      <h2 className="text-sm font-semibold mb-1 line-clamp-1">{typedVideo.title}</h2>
+                      <p className="text-xs text-gray-600 mb-2 line-clamp-2">{typedVideo.description}</p>
                       <div className="flex items-center justify-between text-sm">
                         <div className="flex items-center space-x-1 text-gray-600">
                           <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

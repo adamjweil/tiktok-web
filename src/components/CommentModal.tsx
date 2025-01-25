@@ -6,6 +6,10 @@ import { useAuth } from '../contexts/AuthContext';
 import { database } from '../lib/firebase/config';
 import { ref, push, set, get, query, orderByChild, remove } from 'firebase/database';
 
+interface Reply extends Omit<Comment, 'replies'> {
+  parentCommentId: string;
+}
+
 interface Comment {
   id: string;
   userId: string;
@@ -13,6 +17,10 @@ interface Comment {
   userImage: string;
   text: string;
   createdAt: string;
+  likes?: number;
+  likedBy?: Record<string, boolean>;
+  replies?: Reply[];
+  replyCount?: number;
 }
 
 interface CommentModalProps {
@@ -25,6 +33,8 @@ interface CommentModalProps {
 export default function CommentModal({ isOpen, onClose, videoId, onCommentAdded }: CommentModalProps) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
+  const [replyingTo, setReplyingTo] = useState<string | null>(null);
+  const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [currentUserProfile, setCurrentUserProfile] = useState<{ avatarUrl: string; name: string } | null>(null);
@@ -73,6 +83,34 @@ export default function CommentModal({ isOpen, onClose, videoId, onCommentAdded 
           const userProfileSnapshot = await get(userProfileRef);
           const userProfile = userProfileSnapshot.val();
 
+          // Fetch and process replies if they exist
+          const replies: Reply[] = [];
+          if (commentData.replies) {
+            for (const [replyId, reply] of Object.entries(commentData.replies)) {
+              const replyData = reply as any;
+              const replyUserProfileRef = ref(database, `users/${replyData.userId}/profile`);
+              const replyUserSnapshot = await get(replyUserProfileRef);
+              const replyUserProfile = replyUserSnapshot.val();
+
+              replies.push({
+                id: replyId,
+                userId: replyData.userId,
+                username: replyUserProfile?.name || 'Anonymous',
+                userImage: replyUserProfile?.avatarUrl || '/default-avatar.png',
+                text: replyData.text,
+                createdAt: replyData.createdAt,
+                likes: replyData.likes,
+                likedBy: replyData.likedBy,
+                parentCommentId: id
+              });
+            }
+          }
+
+          // Sort replies by date
+          replies.sort((a, b) => 
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          );
+
           fetchedComments.push({
             id,
             userId: commentData.userId,
@@ -80,6 +118,10 @@ export default function CommentModal({ isOpen, onClose, videoId, onCommentAdded 
             userImage: userProfile?.avatarUrl || '/default-avatar.png',
             text: commentData.text,
             createdAt: commentData.createdAt,
+            likes: commentData.likes,
+            likedBy: commentData.likedBy,
+            replies,
+            replyCount: commentData.replyCount || 0
           });
         }
       }
@@ -87,7 +129,7 @@ export default function CommentModal({ isOpen, onClose, videoId, onCommentAdded 
       fetchedComments.sort((a, b) => 
         new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       );
-      setComments(fetchedComments); // No need for reverse() since we're already sorting newest first
+      setComments(fetchedComments);
     } catch (error) {
       console.error('Error fetching comments:', error);
     } finally {
@@ -169,24 +211,42 @@ export default function CommentModal({ isOpen, onClose, videoId, onCommentAdded 
     }
   };
 
-  const handleDeleteComment = async (commentId: string) => {
+  const handleDeleteComment = async (commentId: string, parentCommentId?: string) => {
     if (!user) return;
     
     try {
       setSubmitting(true);
-      // Delete the comment
-      const commentRef = ref(database, `videoComments/${videoId}/${commentId}`);
-      await remove(commentRef);
+      
+      if (parentCommentId) {
+        // Delete the reply
+        const replyRef = ref(database, `videoComments/${videoId}/${parentCommentId}/replies/${commentId}`);
+        await remove(replyRef);
 
-      // Update video's comment count
-      const videoRef = ref(database, `videos/${videoId}`);
-      const videoSnapshot = await get(videoRef);
-      if (videoSnapshot.exists()) {
-        const videoData = videoSnapshot.val();
-        await set(videoRef, {
-          ...videoData,
-          comments: Math.max((videoData.comments || 0) - 1, 0), // Ensure count doesn't go below 0
-        });
+        // Update parent comment's reply count
+        const commentRef = ref(database, `videoComments/${videoId}/${parentCommentId}`);
+        const commentSnapshot = await get(commentRef);
+        if (commentSnapshot.exists()) {
+          const commentData = commentSnapshot.val();
+          await set(commentRef, {
+            ...commentData,
+            replyCount: Math.max((commentData.replyCount || 0) - 1, 0)
+          });
+        }
+      } else {
+        // Delete the main comment
+        const commentRef = ref(database, `videoComments/${videoId}/${commentId}`);
+        await remove(commentRef);
+
+        // Update video's comment count
+        const videoRef = ref(database, `videos/${videoId}`);
+        const videoSnapshot = await get(videoRef);
+        if (videoSnapshot.exists()) {
+          const videoData = videoSnapshot.val();
+          await set(videoRef, {
+            ...videoData,
+            comments: Math.max((videoData.comments || 0) - 1, 0), // Ensure count doesn't go below 0
+          });
+        }
       }
 
       await fetchComments();
@@ -200,12 +260,152 @@ export default function CommentModal({ isOpen, onClose, videoId, onCommentAdded 
     }
   };
 
+  const handleLikeComment = async (commentId: string, parentCommentId?: string) => {
+    if (!user) return;
+    
+    try {
+      setSubmitting(true);
+      // If parentCommentId exists, this is a reply
+      const basePath = parentCommentId 
+        ? `videoComments/${videoId}/${parentCommentId}/replies/${commentId}`
+        : `videoComments/${videoId}/${commentId}`;
+      
+      const likedByRef = ref(database, `${basePath}/likedBy/${user.uid}`);
+      const likesRef = ref(database, `${basePath}/likes`);
+      
+      const snapshot = await get(likedByRef);
+      const isLiked = snapshot.exists();
+      
+      // Optimistically update the UI
+      setComments(prevComments => 
+        prevComments.map(comment => {
+          if (parentCommentId && comment.id === parentCommentId) {
+            // Update reply within parent comment
+            return {
+              ...comment,
+              replies: comment.replies?.map(reply => {
+                if (reply.id === commentId) {
+                  const newLikes = isLiked ? (reply.likes || 1) - 1 : (reply.likes || 0) + 1;
+                  const newLikedBy = reply.likedBy ? { ...reply.likedBy } : {};
+                  
+                  if (isLiked) {
+                    delete newLikedBy[user.uid];
+                  } else {
+                    newLikedBy[user.uid] = true;
+                  }
+                  
+                  return {
+                    ...reply,
+                    likes: newLikes,
+                    likedBy: newLikedBy
+                  };
+                }
+                return reply;
+              }) || []
+            };
+          } else if (!parentCommentId && comment.id === commentId) {
+            // Update main comment
+            const newLikes = isLiked ? (comment.likes || 1) - 1 : (comment.likes || 0) + 1;
+            const newLikedBy = comment.likedBy ? { ...comment.likedBy } : {};
+            
+            if (isLiked) {
+              delete newLikedBy[user.uid];
+            } else {
+              newLikedBy[user.uid] = true;
+            }
+            
+            return {
+              ...comment,
+              likes: newLikes,
+              likedBy: newLikedBy
+            };
+          }
+          return comment;
+        })
+      );
+      
+      // Update the database in the background
+      if (isLiked) {
+        // Unlike
+        await set(likedByRef, null);
+        await set(likesRef, parentCommentId
+          ? (comments.find(c => c.id === parentCommentId)?.replies?.find(r => r.id === commentId)?.likes || 1) - 1
+          : (comments.find(c => c.id === commentId)?.likes || 1) - 1
+        );
+      } else {
+        // Like
+        await set(likedByRef, true);
+        await set(likesRef, parentCommentId
+          ? (comments.find(c => c.id === parentCommentId)?.replies?.find(r => r.id === commentId)?.likes || 0) + 1
+          : (comments.find(c => c.id === commentId)?.likes || 0) + 1
+        );
+      }
+    } catch (error) {
+      console.error('Error toggling like:', error);
+      // Revert the optimistic update on error
+      await fetchComments();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const isCommentLiked = (comment: Comment) => {
+    return comment.likedBy?.[user?.uid || ''] || false;
+  };
+
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return new Intl.RelativeTimeFormat('en', { numeric: 'auto' }).format(
       Math.ceil((date.getTime() - Date.now()) / (1000 * 60 * 60 * 24)),
       'day'
     );
+  };
+
+  const handleReply = async (parentCommentId: string, replyText: string) => {
+    if (!user || !replyText.trim() || submitting) return;
+
+    try {
+      setSubmitting(true);
+      const repliesRef = ref(database, `videoComments/${videoId}/${parentCommentId}/replies`);
+      const newReplyRef = push(repliesRef);
+      
+      await set(newReplyRef, {
+        userId: user.uid,
+        text: replyText.trim(),
+        createdAt: new Date().toISOString(),
+        parentCommentId
+      });
+
+      // Update reply count
+      const commentRef = ref(database, `videoComments/${videoId}/${parentCommentId}`);
+      const commentSnapshot = await get(commentRef);
+      if (commentSnapshot.exists()) {
+        const commentData = commentSnapshot.val();
+        await set(commentRef, {
+          ...commentData,
+          replyCount: (commentData.replyCount || 0) + 1
+        });
+      }
+
+      setReplyingTo(null);
+      await fetchComments();
+    } catch (error) {
+      console.error('Error posting reply:', error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const toggleReplies = (commentId: string) => {
+    setExpandedComments(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(commentId)) {
+        newSet.delete(commentId);
+      } else {
+        newSet.add(commentId);
+      }
+      return newSet;
+    });
   };
 
   return (
@@ -234,7 +434,7 @@ export default function CommentModal({ isOpen, onClose, videoId, onCommentAdded 
               leaveFrom="opacity-100 scale-100"
               leaveTo="opacity-0 scale-95"
             >
-              <Dialog.Panel className="w-full max-w-md transform overflow-hidden rounded-2xl bg-white shadow-xl transition-all">
+              <Dialog.Panel className="w-full max-w-[600px] transform overflow-hidden rounded-2xl bg-white shadow-xl transition-all">
                 <div className="relative">
                   {/* Header */}
                   <div className="border-b border-gray-200 px-4 py-3 flex items-center justify-between">
@@ -286,8 +486,37 @@ export default function CommentModal({ isOpen, onClose, videoId, onCommentAdded 
                                   </span>
                                 </div>
                                 <p className="text-gray-700 text-sm mb-1">{comment.text}</p>
-                                {user && user.uid === comment.userId && (
-                                  <div className="flex justify-end">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-4">
+                                    <button
+                                      onClick={() => handleLikeComment(comment.id)}
+                                      disabled={submitting}
+                                      className="flex items-center space-x-1 text-sm text-gray-500 hover:text-indigo-600 transition-colors"
+                                    >
+                                      {isCommentLiked(comment) ? (
+                                        <svg className="w-4 h-4 fill-indigo-600" viewBox="0 0 20 20">
+                                          <path d="M2 10.5a1.5 1.5 0 113 0v6a1.5 1.5 0 01-3 0v-6zM6 10.333v5.43a2 2 0 001.106 1.79l.05.025A4 4 0 008.943 18h5.416a2 2 0 001.962-1.608l1.2-6A2 2 0 0015.56 8H12V4a2 2 0 00-2-2 1 1 0 00-1 1v.667a4 4 0 01-.8 2.4L6.8 7.933a4 4 0 00-.8 2.4z" />
+                                        </svg>
+                                      ) : (
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5" />
+                                        </svg>
+                                      )}
+                                      <span>{comment.likes || 0}</span>
+                                    </button>
+                                    {user && (
+                                      <button
+                                        onClick={() => setReplyingTo(replyingTo === comment.id ? null : comment.id)}
+                                        className="flex items-center space-x-1 text-sm text-gray-500 hover:text-indigo-600 transition-colors"
+                                      >
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                                        </svg>
+                                        <span>Reply</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                  {user && user.uid === comment.userId && (
                                     <button
                                       onClick={() => handleDeleteComment(comment.id)}
                                       disabled={submitting}
@@ -308,6 +537,140 @@ export default function CommentModal({ isOpen, onClose, videoId, onCommentAdded 
                                         />
                                       </svg>
                                     </button>
+                                  )}
+                                </div>
+                                
+                                {/* Reply Input */}
+                                {replyingTo === comment.id && user && (
+                                  <div className="mt-3 flex items-start space-x-2">
+                                    <div className="relative w-6 h-6 flex-shrink-0">
+                                      <Image
+                                        src={currentUserProfile?.avatarUrl || '/default-avatar.png'}
+                                        alt={currentUserProfile?.name || user.displayName || 'User'}
+                                        className="rounded-full object-cover"
+                                        fill
+                                        sizes="24px"
+                                      />
+                                    </div>
+                                    <form 
+                                      className="flex-1"
+                                      onSubmit={(e) => {
+                                        e.preventDefault();
+                                        const form = e.target as HTMLFormElement;
+                                        const input = form.elements.namedItem('reply') as HTMLInputElement;
+                                        handleReply(comment.id, input.value);
+                                        input.value = '';
+                                      }}
+                                    >
+                                      <input
+                                        name="reply"
+                                        className="w-full px-3 py-1 text-sm border border-gray-300 rounded-full focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                        placeholder={`Reply to ${comment.username}...`}
+                                        disabled={submitting}
+                                      />
+                                    </form>
+                                  </div>
+                                )}
+
+                                {/* Replies Section */}
+                                {(comment.replyCount || 0) > 0 && (
+                                  <div className="mt-2">
+                                    <button
+                                      onClick={() => toggleReplies(comment.id)}
+                                      className="flex items-center space-x-1 text-sm font-medium text-indigo-600 hover:text-indigo-700 transition-colors"
+                                    >
+                                      <svg 
+                                        className={`w-4 h-4 transform transition-transform ${expandedComments.has(comment.id) ? 'rotate-180' : ''}`} 
+                                        fill="none" 
+                                        stroke="currentColor" 
+                                        viewBox="0 0 24 24"
+                                      >
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                      </svg>
+                                      <span>
+                                        {expandedComments.has(comment.id) 
+                                          ? 'Hide replies' 
+                                          : `Show ${comment.replyCount || 0} ${(comment.replyCount || 0) === 1 ? 'reply' : 'replies'}`
+                                        }
+                                      </span>
+                                    </button>
+
+                                    {/* Replies List */}
+                                    {expandedComments.has(comment.id) && comment.replies && (
+                                      <div className="mt-2 space-y-3 pl-4 border-l-2 border-gray-100">
+                                        {comment.replies.map((reply) => (
+                                          <div key={reply.id} className="flex space-x-2">
+                                            <Link href={`/profile/${reply.userId}`} className="flex-shrink-0">
+                                              <div className="relative w-6 h-6">
+                                                <Image
+                                                  src={reply.userImage}
+                                                  alt={reply.username}
+                                                  className="rounded-full object-cover"
+                                                  fill
+                                                  sizes="24px"
+                                                />
+                                              </div>
+                                            </Link>
+                                            <div className="flex-1">
+                                              <div className="bg-gray-50 rounded-lg px-3 py-2">
+                                                <div className="flex items-center justify-between mb-1">
+                                                  <Link 
+                                                    href={`/profile/${reply.userId}`}
+                                                    className="font-medium text-sm text-gray-900 hover:text-indigo-600 transition-colors"
+                                                  >
+                                                    {reply.username}
+                                                  </Link>
+                                                  <span className="text-xs text-gray-500">
+                                                    {formatDate(reply.createdAt)}
+                                                  </span>
+                                                </div>
+                                                <p className="text-gray-700 text-sm">{reply.text}</p>
+                                                <div className="flex items-center justify-between mt-1">
+                                                  <button
+                                                    onClick={() => handleLikeComment(reply.id, reply.parentCommentId)}
+                                                    disabled={submitting}
+                                                    className="flex items-center space-x-1 text-xs text-gray-500 hover:text-indigo-600 transition-colors"
+                                                  >
+                                                    {isCommentLiked(reply) ? (
+                                                      <svg className="w-3 h-3 fill-indigo-600" viewBox="0 0 20 20">
+                                                        <path d="M2 10.5a1.5 1.5 0 113 0v6a1.5 1.5 0 01-3 0v-6zM6 10.333v5.43a2 2 0 001.106 1.79l.05.025A4 4 0 008.943 18h5.416a2 2 0 001.962-1.608l1.2-6A2 2 0 0015.56 8H12V4a2 2 0 00-2-2 1 1 0 00-1 1v.667a4 4 0 01-.8 2.4L6.8 7.933a4 4 0 00-.8 2.4z" />
+                                                      </svg>
+                                                    ) : (
+                                                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5" />
+                                                      </svg>
+                                                    )}
+                                                    <span>{reply.likes || 0}</span>
+                                                  </button>
+                                                  {user && user.uid === reply.userId && (
+                                                    <button
+                                                      onClick={() => handleDeleteComment(reply.id, reply.parentCommentId)}
+                                                      disabled={submitting}
+                                                      className="p-1 hover:bg-red-100 rounded-full transition-colors"
+                                                      title="Delete reply"
+                                                    >
+                                                      <svg 
+                                                        className="w-3 h-3 text-red-500 hover:text-red-600 transition-colors" 
+                                                        fill="none" 
+                                                        stroke="currentColor" 
+                                                        viewBox="0 0 24 24"
+                                                      >
+                                                        <path 
+                                                          strokeLinecap="round" 
+                                                          strokeLinejoin="round" 
+                                                          strokeWidth={2.5} 
+                                                          d="M6 18L18 6M6 6l12 12"
+                                                        />
+                                                      </svg>
+                                                    </button>
+                                                  )}
+                                                </div>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
                                   </div>
                                 )}
                               </div>

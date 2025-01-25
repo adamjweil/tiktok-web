@@ -16,7 +16,8 @@ import { useLikeVideo, useIncrementViews } from '../hooks/useVideos';
 type Video = {
   id: string;
   userId: string;
-  caption: string;
+  title: string;
+  description: string;
   videoUrl: string;
   likes: number;
   comments: number;
@@ -114,7 +115,8 @@ const VideoModal = ({ video, onClose, onVideoPlay }: VideoModalProps) => {
                   </div>
 
                   {/* Video details */}
-                  <h3 className="text-xl font-semibold text-gray-900 mb-2">{video.caption}</h3>
+                  <h3 className="text-xl font-semibold text-gray-900 mb-2">{video.title}</h3>
+                  <p className="text-gray-600">{video.description}</p>
                   
                   {/* Stats */}
                   <div className="flex items-center space-x-6 text-gray-600">
@@ -233,8 +235,9 @@ export default function Trending() {
                   className="text-sm font-semibold mb-1 line-clamp-1 cursor-pointer hover:text-indigo-600 transition-colors"
                   onClick={() => setSelectedVideo(video)}
                 >
-                  {video.caption}
+                  {video.title}
                 </h2>
+                <p className="text-xs text-gray-600 mb-2 line-clamp-2">{video.description}</p>
                 <div className="flex items-center justify-between text-sm">
                   <div className="flex items-center space-x-1 text-gray-600">
                     <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
