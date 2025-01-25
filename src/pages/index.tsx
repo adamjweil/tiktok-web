@@ -7,6 +7,9 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useUploadModal } from '../contexts/UploadModalContext';
 import SearchBar from '../components/SearchBar';
+import VideoModal from '../components/VideoModal';
+import UploadModal from '../components/UploadModal';
+import CommentModal from '../components/CommentModal';
 
 interface Video {
   id: string;
@@ -22,6 +25,7 @@ interface Video {
   comments: number;
   shares: number;
   likedBy?: string[];
+  views: number;
 }
 
 interface Comment {
@@ -52,6 +56,9 @@ export default function Home() {
   const { user } = useAuth();
   const { openUploadModal } = useUploadModal();
   const pageSize = 10;
+  const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [commentModalVideo, setCommentModalVideo] = useState<Video | null>(null);
 
   const fetchVideos = async () => {
     try {
@@ -80,7 +87,8 @@ export default function Home() {
             userImage: userProfile?.avatarUrl || '/default-avatar.png',
             likedBy: videoData.likedBy ? Object.keys(videoData.likedBy) : [],
             videoUrl: videoData.videoUrl || '',
-            thumbnailUrl: videoData.thumbnailUrl || '/default-thumbnail.jpg'
+            thumbnailUrl: videoData.thumbnailUrl || '/default-thumbnail.jpg',
+            views: videoData.views || 0
           });
         }
 
@@ -107,41 +115,52 @@ export default function Home() {
 
     try {
       const videoRef = ref(database, `videos/${videoId}`);
-      const snapshot = await get(videoRef);
-      
-      if (!snapshot.exists()) return;
-      
-      const videoData = snapshot.val();
-      const likedBy = videoData.likedBy || {};
-      const isLiked = likedBy[user.uid];
+      const likedByRef = ref(database, `videos/${videoId}/likedBy/${user.uid}`);
+      const videoSnapshot = await get(videoRef);
+
+      if (!videoSnapshot.exists()) {
+        console.error('Video not found');
+        return;
+      }
+
+      const videoData = videoSnapshot.val();
+      const isLiked = videoData.likedBy && videoData.likedBy[user.uid];
 
       if (isLiked) {
         // Unlike
         await update(videoRef, {
-          [`likedBy/${user.uid}`]: null,
-          likes: (videoData.likes || 0) - 1
+          likes: rtdbIncrement(-1)
         });
+        await set(likedByRef, null);
       } else {
         // Like
         await update(videoRef, {
-          [`likedBy/${user.uid}`]: true,
-          likes: (videoData.likes || 0) + 1
+          likes: rtdbIncrement(1)
         });
+        await set(likedByRef, true);
       }
 
       // Update local state
-      setVideos(prevVideos =>
-        prevVideos.map(video =>
-          video.id === videoId
-            ? {
+      setVideos(prev =>
+        prev.map(video => {
+          if (video.id === videoId) {
+            const newLikedBy = video.likedBy || [];
+            if (isLiked) {
+              return {
                 ...video,
-                likes: isLiked ? (video.likes || 0) - 1 : (video.likes || 0) + 1,
-                likedBy: isLiked
-                  ? (video.likedBy || []).filter(uid => uid !== user.uid)
-                  : [...(video.likedBy || []), user.uid]
-              }
-            : video
-        )
+                likes: (video.likes || 0) - 1,
+                likedBy: newLikedBy.filter(id => id !== user.uid)
+              };
+            } else {
+              return {
+                ...video,
+                likes: (video.likes || 0) + 1,
+                likedBy: [...newLikedBy, user.uid]
+              };
+            }
+          }
+          return video;
+        })
       );
     } catch (error) {
       console.error('Error updating like:', error);
@@ -242,6 +261,23 @@ export default function Home() {
     }
   };
 
+  const handleVideoPlay = (videoId: string) => {
+    // Implementation of handleVideoPlay function
+  };
+
+  const refreshVideos = () => {
+    // Implementation of refreshVideos function
+  };
+
+  const handleCommentAdded = async () => {
+    // Refresh videos immediately when a comment is added
+    await fetchVideos();
+  };
+
+  const handleCommentModalClose = () => {
+    setCommentModalVideo(null);
+  };
+
   useEffect(() => {
     fetchVideos();
   }, []);
@@ -277,128 +313,122 @@ export default function Home() {
           </svg>
         </button>
       )}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
         {videos.map((video) => (
           <div key={video.id} className="bg-white rounded-lg shadow-sm overflow-hidden">
             {/* User info header */}
-            <div className="p-2 border-b">
+            <div className="p-1.5 border-b">
               <Link href={`/profile/${video.userId}`} className="flex items-center">
-                <div className="relative w-8 h-8">
+                <div className="relative w-6 h-6">
                   <Image
                     src={video.userImage || '/default-avatar.png'}
                     alt={video.username}
                     className="rounded-full object-cover"
                     fill
-                    sizes="(max-width: 768px) 32px, 32px"
+                    sizes="(max-width: 768px) 24px, 24px"
                   />
                 </div>
-                <span className="ml-2 text-sm font-medium truncate">{video.username}</span>
+                <span className="ml-1.5 text-xs font-medium truncate">{video.username}</span>
               </Link>
             </div>
-
+            
             {/* Video thumbnail */}
-            <div className="relative pt-[56.25%]">
+            <div 
+              className="relative pt-[66.5%] cursor-pointer group"
+              onClick={() => setSelectedVideo(video)}
+            >
               <video
                 src={video.videoUrl}
                 className="absolute top-0 left-0 w-full h-full object-cover"
                 controls
                 playsInline
                 poster={video.thumbnailUrl || '/default-thumbnail.jpg'}
+                onPlay={() => handleVideoPlay(video.id)}
               />
+              <div className="absolute inset-0 bg-black opacity-0 group-hover:opacity-20 transition-opacity" />
             </div>
 
             {/* Video info */}
-            <div className="p-3">
-              <h2 className="text-sm font-semibold mb-1 line-clamp-1">{video.title}</h2>
-              <p className="text-xs text-gray-600 mb-2 line-clamp-2">{video.description}</p>
-
-              <div className="flex items-center justify-between text-sm">
+            <div className="p-2">
+              <h2 
+                className="text-xs font-semibold mb-1 line-clamp-1 cursor-pointer hover:text-indigo-600 transition-colors"
+                onClick={() => setSelectedVideo(video)}
+              >
+                {video.title}
+              </h2>
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center space-x-0.5 text-gray-600">
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                  <span className="text-xs">{video.views || 0}</span>
+                </div>
                 <button
-                  onClick={() => handleLike(video.id)}
-                  className={`flex items-center space-x-1 ${
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleLike(video.id);
+                  }}
+                  className={`flex items-center space-x-0.5 ${
                     user && video.likedBy?.includes(user.uid)
                       ? 'text-red-500'
                       : 'text-gray-600 hover:text-red-500'
                   }`}
                 >
-                  <svg className="h-5 w-5" fill={user && video.likedBy?.includes(user.uid) ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
+                  <svg 
+                    className="h-4 w-4" 
+                    fill={user && video.likedBy?.includes(user.uid) ? 'currentColor' : 'none'} 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
                   </svg>
                   <span className="text-xs">{video.likes || 0}</span>
                 </button>
-
                 <button
-                  onClick={() => {
-                    setShowComments(showComments === video.id ? null : video.id);
-                    if (showComments !== video.id) {
-                      fetchComments(video.id);
-                    }
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCommentModalVideo(video);
                   }}
-                  className="flex items-center space-x-1 text-gray-600 hover:text-blue-500"
+                  className="flex items-center space-x-0.5 text-gray-600 hover:text-indigo-600 transition-colors"
                 >
-                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                   </svg>
                   <span className="text-xs">{video.comments || 0}</span>
                 </button>
               </div>
-
-              {/* Comments section */}
-              {showComments === video.id && (
-                <div className="mt-3 border-t pt-3">
-                  {user && (
-                    <div className="flex space-x-2 mb-3">
-                      <input
-                        type="text"
-                        value={newComment}
-                        onChange={(e) => setNewComment(e.target.value)}
-                        placeholder="Add a comment..."
-                        className="flex-1 border rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                      />
-                      <button
-                        onClick={() => handleComment(video.id)}
-                        disabled={!newComment.trim()}
-                        className="bg-indigo-600 text-white px-3 py-1 rounded text-sm disabled:opacity-50 hover:bg-indigo-700"
-                      >
-                        Post
-                      </button>
-                    </div>
-                  )}
-
-                  <div className="space-y-3 max-h-48 overflow-y-auto">
-                    {comments[video.id]?.map((comment) => (
-                      <div key={comment.id} className="flex space-x-2 p-1 hover:bg-gray-50 rounded">
-                        <Link href={`/profile/${comment.userId}`} className="flex-shrink-0">
-                          <div className="relative w-6 h-6">
-                            <Image
-                              src={comment.userImage || '/default-avatar.png'}
-                              alt={comment.username}
-                              className="rounded-full object-cover"
-                              fill
-                              sizes="(max-width: 768px) 24px, 24px"
-                            />
-                          </div>
-                        </Link>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center space-x-1">
-                            <Link href={`/profile/${comment.userId}`} className="text-xs font-medium text-gray-900 hover:underline">
-                              {comment.username}
-                            </Link>
-                            <span className="text-xs text-gray-500">
-                              {new Date(comment.createdAt).toLocaleDateString()}
-                            </span>
-                          </div>
-                          <p className="text-xs text-gray-600 break-words">{comment.text}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         ))}
       </div>
+
+      {/* Video Modal */}
+      {selectedVideo && (
+        <VideoModal
+          video={selectedVideo}
+          onClose={() => setSelectedVideo(null)}
+          onVideoPlay={handleVideoPlay}
+        />
+      )}
+
+      {/* Upload Modal */}
+      <UploadModal
+        isOpen={isUploadModalOpen}
+        onClose={() => setIsUploadModalOpen(false)}
+        onVideoUploaded={refreshVideos}
+      />
+
+      {/* Comment Modal */}
+      {commentModalVideo && (
+        <CommentModal
+          isOpen={!!commentModalVideo}
+          onClose={handleCommentModalClose}
+          videoId={commentModalVideo.id}
+          onCommentAdded={handleCommentAdded}
+        />
+      )}
     </div>
   );
 }

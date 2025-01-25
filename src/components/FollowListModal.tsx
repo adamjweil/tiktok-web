@@ -31,18 +31,22 @@ export default function FollowListModal({ isOpen, onClose, userId, type, title }
       try {
         const followsRef = ref(database, type === 'followers' 
           ? `userFollowers/${userId}` // People who follow this user
-          : `follows/${userId}` // People this user follows
+          : `userFollowing/${userId}` // People this user follows
         );
+        console.log('Fetching users from path:', type === 'followers' ? `userFollowers/${userId}` : `userFollowing/${userId}`);
         const snapshot = await get(followsRef);
         
         if (snapshot.exists()) {
+          console.log('Found data:', snapshot.val());
           const userIds = Object.keys(snapshot.val());
+          console.log('User IDs found:', userIds);
           const userProfiles = await Promise.all(
             userIds.map(async (id) => {
               const userRef = ref(database, `users/${id}/profile`);
               const userSnapshot = await get(userRef);
               if (userSnapshot.exists()) {
                 const userData = userSnapshot.val();
+                console.log('Found user profile for', id, userData);
                 return {
                   id,
                   name: userData.name || 'Anonymous',
@@ -50,12 +54,16 @@ export default function FollowListModal({ isOpen, onClose, userId, type, title }
                   bio: userData.bio || null
                 } as User;
               }
+              console.log('No profile found for user', id);
               return null;
             })
           );
           
-          setUsers(userProfiles.filter((profile): profile is User => profile !== null));
+          const filteredProfiles = userProfiles.filter((profile): profile is User => profile !== null);
+          console.log('Final filtered profiles:', filteredProfiles);
+          setUsers(filteredProfiles);
         } else {
+          console.log('No data found at path');
           setUsers([]);
         }
       } catch (error) {
@@ -109,6 +117,9 @@ export default function FollowListModal({ isOpen, onClose, userId, type, title }
                   key={user.id}
                   href={`/profile/${user.id}`}
                   className="flex items-center p-2 hover:bg-gray-50 rounded-lg transition-colors"
+                  onClick={(e) => {
+                    onClose();
+                  }}
                 >
                   <div className="relative w-12 h-12 flex-shrink-0">
                     <Image

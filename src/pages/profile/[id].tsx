@@ -11,6 +11,7 @@ import FollowListModal from '../../components/FollowListModal';
 import VideoCard from '../../components/VideoCard';
 import Link from 'next/link';
 import UploadModal from '../../components/UploadModal';
+import CommentModal from '../../components/CommentModal';
 
 interface UserProfile {
   username: string;
@@ -252,6 +253,7 @@ export default function Profile() {
   const [followLoading, setFollowLoading] = useState(false);
   const [showFollowModal, setShowFollowModal] = useState<'followers' | 'following' | null>(null);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [commentModalVideo, setCommentModalVideo] = useState<Video | null>(null);
 
   useEffect(() => {
     if (!router.isReady) return;
@@ -436,13 +438,15 @@ export default function Profile() {
     setFollowLoading(true);
 
     try {
-      const followRef = dbRef(database, `follows/${user.uid}/${profileId}`);
+      const followingRef = dbRef(database, `userFollowing/${user.uid}/${profileId}`);
+      const followersRef = dbRef(database, `userFollowers/${profileId}/${user.uid}`);
       const userProfileRef = dbRef(database, `users/${profileId}/profile`);
       const currentUserProfileRef = dbRef(database, `users/${user.uid}/profile`);
 
       if (isFollowing) {
         // Unfollow
-        await remove(followRef);
+        await remove(followingRef);
+        await remove(followersRef);
         
         // Update follower/following counts
         const userSnapshot = await get(userProfileRef);
@@ -470,7 +474,9 @@ export default function Profile() {
         setIsFollowing(false);
       } else {
         // Follow
-        await set(followRef, true);
+        const timestamp = new Date().toISOString();
+        await set(followingRef, { createdAt: timestamp });
+        await set(followersRef, { createdAt: timestamp });
         
         // Update follower/following counts
         const userSnapshot = await get(userProfileRef);
@@ -605,6 +611,15 @@ export default function Profile() {
     }
   };
 
+  const handleCommentAdded = async () => {
+    // Refresh videos immediately when a comment is added
+    await refreshVideos();
+  };
+
+  const handleCommentModalClose = () => {
+    setCommentModalVideo(null);
+  };
+
   if (!router.isReady) {
     return (
       <div className="flex justify-center items-center min-h-screen">
@@ -677,20 +692,12 @@ export default function Profile() {
             </div>
             <div className="flex space-x-4">
               {user && user.uid === router.query.id ? (
-                <>
-                  <button
-                    onClick={() => setIsEditModalOpen(true)}
-                    className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition-colors"
-                  >
-                    Edit Profile
-                  </button>
-                  <button
-                    onClick={() => setIsUploadModalOpen(true)}
-                    className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition-colors"
-                  >
-                    Upload Video
-                  </button>
-                </>
+                <button
+                  onClick={() => setIsEditModalOpen(true)}
+                  className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition-colors"
+                >
+                  Edit Profile
+                </button>
               ) : user && (
                 <button
                   onClick={handleFollow}
@@ -751,12 +758,18 @@ export default function Profile() {
                         </svg>
                         <span className="text-xs">{video.likes || 0}</span>
                       </div>
-                      <div className="flex items-center space-x-1 text-gray-600">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCommentModalVideo(video);
+                        }}
+                        className="flex items-center space-x-1 text-gray-600 hover:text-indigo-600 transition-colors"
+                      >
                         <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                         </svg>
                         <span className="text-xs">{video.comments || 0}</span>
-                      </div>
+                      </button>
                     </div>
                   </div>
 
@@ -788,6 +801,19 @@ export default function Profile() {
             </div>
           )}
         </div>
+
+        {/* Add floating upload button */}
+        {user && user.uid === router.query.id && (
+          <button
+            onClick={() => setIsUploadModalOpen(true)}
+            className="fixed bottom-8 right-8 bg-indigo-600 text-white p-4 rounded-full shadow-lg hover:bg-indigo-700 transition-colors z-50"
+            aria-label="Upload video"
+          >
+            <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+          </button>
+        )}
       </div>
 
       {profile && (
@@ -828,6 +854,16 @@ export default function Profile() {
         onClose={() => setIsUploadModalOpen(false)}
         onVideoUploaded={refreshVideos}
       />
+
+      {/* Comment Modal */}
+      {commentModalVideo && (
+        <CommentModal
+          isOpen={!!commentModalVideo}
+          onClose={handleCommentModalClose}
+          videoId={commentModalVideo.id}
+          onCommentAdded={handleCommentAdded}
+        />
+      )}
     </div>
   );
 } 

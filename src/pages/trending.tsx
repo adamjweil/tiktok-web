@@ -1,12 +1,15 @@
 import { useState, useEffect, Fragment } from 'react';
 import { database } from '../lib/firebase/config';
-import { ref, get, query, orderByChild, limitToLast, update, increment as rtdbIncrement } from 'firebase/database';
+import { ref, get, query, orderByChild, limitToLast, update, increment as rtdbIncrement, set } from 'firebase/database';
 import VideoCard from '../components/VideoCard';
 import Head from 'next/head';
 import Link from 'next/link';
 import Image from 'next/image';
 import SearchBar from '../components/SearchBar';
 import { Dialog, Transition } from '@headlessui/react';
+import { useAuth } from '../contexts/AuthContext';
+import UploadModal from '../components/UploadModal';
+import CommentModal from '../components/CommentModal';
 
 type Video = {
   id: string;
@@ -20,15 +23,26 @@ type Video = {
   userImage: string;
   createdAt: string;
   thumbnailUrl?: string;
+  likedBy?: Record<string, boolean>;
 };
 
 interface VideoModalProps {
   video: Video | null;
   onClose: () => void;
+  onVideoPlay: (videoId: string) => void;
 }
 
-const VideoModal = ({ video, onClose }: VideoModalProps) => {
+const VideoModal = ({ video, onClose, onVideoPlay }: VideoModalProps) => {
   if (!video) return null;
+  const [localViews, setLocalViews] = useState(video.views);
+  const [isAnimating, setIsAnimating] = useState(false);
+
+  const handleVideoEnd = async () => {
+    await onVideoPlay(video.id);
+    setIsAnimating(true);
+    setLocalViews(prev => prev + 1);
+    setTimeout(() => setIsAnimating(false), 1000);
+  };
 
   return (
     <Transition appear show={true} as={Fragment}>
@@ -75,6 +89,7 @@ const VideoModal = ({ video, onClose }: VideoModalProps) => {
                     autoPlay
                     src={video.videoUrl}
                     poster={video.thumbnailUrl}
+                    onEnded={handleVideoEnd}
                   />
                 </div>
 
@@ -106,7 +121,9 @@ const VideoModal = ({ video, onClose }: VideoModalProps) => {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                       </svg>
-                      {video.views?.toLocaleString() || 0} views
+                      <span className={`transition-all duration-300 ${isAnimating ? 'text-indigo-600 scale-110' : ''}`}>
+                        {localViews?.toLocaleString() || 0} views
+                      </span>
                     </div>
                     <div className="flex items-center">
                       <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -137,6 +154,10 @@ export default function Trending() {
   const [recentVideos, setRecentVideos] = useState<Video[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [commentModalVideo, setCommentModalVideo] = useState<Video | null>(null);
+  const { user } = useAuth();
+  const [pendingRefresh, setPendingRefresh] = useState(false);
 
   useEffect(() => {
     fetchVideos();
@@ -177,6 +198,7 @@ export default function Trending() {
           userImage: userProfile?.avatarUrl || videoData.userImage || '/default-avatar.png',
           createdAt: videoData.createdAt || '',
           thumbnailUrl: videoData.thumbnailUrl || undefined,
+          likedBy: videoData.likedBy || {},
         });
       }
 
@@ -223,6 +245,80 @@ export default function Trending() {
     } catch (error) {
       console.error('Error updating view count:', error);
     }
+  };
+
+  const handleLike = async (videoId: string) => {
+    if (!user) return;
+
+    try {
+      const videoRef = ref(database, `videos/${videoId}`);
+      const likedByRef = ref(database, `videos/${videoId}/likedBy/${user.uid}`);
+      const videoSnapshot = await get(videoRef);
+
+      if (!videoSnapshot.exists()) {
+        console.error('Video not found');
+        return;
+      }
+
+      const videoData = videoSnapshot.val();
+      const isLiked = videoData.likedBy && videoData.likedBy[user.uid];
+
+      if (isLiked) {
+        // Unlike
+        await update(videoRef, {
+          likes: rtdbIncrement(-1)
+        });
+        await set(likedByRef, null);
+      } else {
+        // Like
+        await update(videoRef, {
+          likes: rtdbIncrement(1)
+        });
+        await set(likedByRef, true);
+      }
+
+      // Update local state for all sections
+      const updateVideos = (videos: Video[]) =>
+        videos.map(video => {
+          if (video.id === videoId) {
+            const newLikedBy = { ...(video.likedBy || {}) };
+            if (isLiked) {
+              delete newLikedBy[user.uid];
+              return {
+                ...video,
+                likes: (video.likes || 0) - 1,
+                likedBy: newLikedBy
+              };
+            } else {
+              return {
+                ...video,
+                likes: (video.likes || 0) + 1,
+                likedBy: { ...newLikedBy, [user.uid]: true }
+              };
+            }
+          }
+          return video;
+        });
+
+      setMostLikedVideos(prev => updateVideos(prev));
+      setMostCommentedVideos(prev => updateVideos(prev));
+      setRecentVideos(prev => updateVideos(prev));
+    } catch (error) {
+      console.error('Error updating like:', error);
+    }
+  };
+
+  const handleCommentAdded = async () => {
+    // Refresh videos immediately when a comment is added
+    await fetchVideos();
+  };
+
+  const handleCommentModalClose = () => {
+    setCommentModalVideo(null);
+  };
+
+  const refreshVideos = async () => {
+    await fetchVideos();
   };
 
   const Section = ({ title, description, videos }: { title: string; description: string; videos: Video[] }) => (
@@ -283,18 +379,39 @@ export default function Trending() {
                     </svg>
                     <span className="text-xs">{video.views || 0}</span>
                   </div>
-                  <div className="flex items-center space-x-1 text-gray-600">
-                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleLike(video.id);
+                    }}
+                    className={`flex items-center space-x-1 ${
+                      user && video.likedBy && video.likedBy[user.uid]
+                        ? 'text-red-500'
+                        : 'text-gray-600 hover:text-red-500'
+                    }`}
+                  >
+                    <svg 
+                      className="h-5 w-5" 
+                      fill={user && video.likedBy && video.likedBy[user.uid] ? 'currentColor' : 'none'} 
+                      stroke="currentColor" 
+                      viewBox="0 0 24 24"
+                    >
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
                     </svg>
                     <span className="text-xs">{video.likes || 0}</span>
-                  </div>
-                  <div className="flex items-center space-x-1 text-gray-600">
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCommentModalVideo(video);
+                    }}
+                    className="flex items-center space-x-1 text-gray-600 hover:text-indigo-600 transition-colors"
+                  >
                     <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                     </svg>
                     <span className="text-xs">{video.comments || 0}</span>
-                  </div>
+                  </button>
                 </div>
               </div>
             </div>
@@ -347,13 +464,44 @@ export default function Trending() {
             </div>
           )}
 
+          {/* Add floating upload button */}
+          {user && (
+            <button
+              onClick={() => setIsUploadModalOpen(true)}
+              className="fixed bottom-8 right-8 bg-indigo-600 text-white p-4 rounded-full shadow-lg hover:bg-indigo-700 transition-colors z-50"
+              aria-label="Upload video"
+            >
+              <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+            </button>
+          )}
+
           {/* Video Modal */}
           {selectedVideo && (
             <VideoModal
               video={selectedVideo}
               onClose={() => setSelectedVideo(null)}
+              onVideoPlay={handleVideoPlay}
             />
           )}
+
+          {/* Comment Modal */}
+          {commentModalVideo && (
+            <CommentModal
+              isOpen={!!commentModalVideo}
+              onClose={handleCommentModalClose}
+              videoId={commentModalVideo.id}
+              onCommentAdded={handleCommentAdded}
+            />
+          )}
+
+          {/* Add UploadModal */}
+          <UploadModal
+            isOpen={isUploadModalOpen}
+            onClose={() => setIsUploadModalOpen(false)}
+            onVideoUploaded={refreshVideos}
+          />
         </div>
       </div>
     </>
