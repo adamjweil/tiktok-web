@@ -3,11 +3,55 @@ import Image from 'next/image';
 import { useRouter } from 'next/router';
 import { useAuth } from '../contexts/AuthContext';
 import { useUploadModal } from '../contexts/UploadModalContext';
+import { useEffect, useState } from 'react';
+import { database } from '../lib/firebase/config';
+import { ref, get } from 'firebase/database';
+
+interface UserProfile {
+  name: string;
+  avatarUrl: string;
+}
 
 export default function Navigation() {
   const { user, logout } = useAuth();
   const router = useRouter();
   const { openUploadModal } = useUploadModal();
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+
+  useEffect(() => {
+    const fetchUserProfile = async () => {
+      if (!user) {
+        setProfile(null);
+        return;
+      }
+
+      try {
+        const userRef = ref(database, `users/${user.uid}/profile`);
+        const snapshot = await get(userRef);
+        
+        if (snapshot.exists()) {
+          const userData = snapshot.val();
+          setProfile({
+            name: userData.name || user.email?.split('@')[0] || 'User',
+            avatarUrl: userData.avatarUrl || '/default-avatar.png'
+          });
+        } else {
+          setProfile({
+            name: user.email?.split('@')[0] || 'User',
+            avatarUrl: '/default-avatar.png'
+          });
+        }
+      } catch (error) {
+        console.error('Error fetching user profile:', error);
+        setProfile({
+          name: user.email?.split('@')[0] || 'User',
+          avatarUrl: '/default-avatar.png'
+        });
+      }
+    };
+
+    fetchUserProfile();
+  }, [user]);
 
   const handleLogout = async () => {
     try {
@@ -57,16 +101,6 @@ export default function Navigation() {
               Profile
             </Link>
 
-            <button 
-              onClick={openUploadModal}
-              className="flex items-center px-4 py-2 text-gray-700 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg w-full text-left"
-            >
-              <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              Upload a Video
-            </button>
-
             <Link 
               href="/users" 
               className="flex items-center px-4 py-2 text-gray-700 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg"
@@ -96,14 +130,14 @@ export default function Navigation() {
             <div className="flex items-center">
               <div className="relative w-8 h-8">
                 <Image
-                  src={user.photoURL || '/default-avatar.png'}
-                  alt={user.displayName || 'User'}
+                  src={profile?.avatarUrl || '/default-avatar.png'}
+                  alt={profile?.name || 'User'}
                   fill
                   className="rounded-full object-cover"
                 />
               </div>
               <span className="ml-2 font-medium text-sm text-gray-700">
-                {user.displayName || 'User'}
+                {profile?.name || 'User'}
               </span>
             </div>
             <button

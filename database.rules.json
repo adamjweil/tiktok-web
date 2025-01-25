@@ -30,6 +30,11 @@
         "following": { ".validate": "newData.isNumber()" },
         "createdAt": { ".validate": "newData.isString()" }
       }
+    },
+    "videoComments": {
+      "$videoId": {
+        ".indexOn": ["createdAt"]
+      }
     }
   }
 } 

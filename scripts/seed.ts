@@ -185,6 +185,30 @@ async function createCommentsForVideo(videoId: string, userId: string, potential
   return comments.length;
 }
 
+async function createFollowRelationship(followerId: string, followedId: string) {
+  // Add to followers list of the followed user
+  await set(ref(db, `userFollowers/${followedId}/${followerId}`), {
+    createdAt: new Date().toISOString()
+  });
+  
+  // Add to following list of the follower
+  await set(ref(db, `userFollowing/${followerId}/${followedId}`), {
+    createdAt: new Date().toISOString()
+  });
+  
+  // Increment followers count for followed user
+  const followedUserRef = ref(db, `users/${followedId}/profile`);
+  const followedSnapshot = await get(followedUserRef);
+  const followedProfile = followedSnapshot.val();
+  await set(ref(db, `users/${followedId}/profile/followers`), (followedProfile.followers || 0) + 1);
+  
+  // Increment following count for follower
+  const followerRef = ref(db, `users/${followerId}/profile`);
+  const followerSnapshot = await get(followerRef);
+  const followerProfile = followerSnapshot.val();
+  await set(ref(db, `users/${followerId}/profile/following`), (followerProfile.following || 0) + 1);
+}
+
 async function createUserWithProfile(index: number, allUserIds: string[] = []) {
   const timestamp = Date.now();
   const email = `testuser${index}_${timestamp}@example.com`;
@@ -230,6 +254,9 @@ async function createUserWithProfile(index: number, allUserIds: string[] = []) {
         videoUrl: sampleVideo.videoUrl,
         thumbnailUrl: sampleVideo.thumbnailUrl,
         userId: uid,
+        views: 0,  // Add initial views count
+        likes: 0,  // Make sure likes is initialized
+        comments: 0,  // Make sure comments is initialized
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
@@ -257,16 +284,7 @@ async function createUserWithProfile(index: number, allUserIds: string[] = []) {
 
       for (const targetUid of usersToFollow) {
         // Create follow relationship
-        await set(ref(db, `follows/${uid}/${targetUid}`), true);
-        
-        // Update following count for current user
-        await set(ref(db, `users/${uid}/profile/following`), numToFollow);
-        
-        // Update followers count for target user
-        const targetUserRef = ref(db, `users/${targetUid}/profile/followers`);
-        const targetUserSnapshot = await get(targetUserRef);
-        const currentFollowers = targetUserSnapshot.val() || 0;
-        await set(targetUserRef, currentFollowers + 1);
+        await createFollowRelationship(uid, targetUid);
       }
     }
 
@@ -347,6 +365,9 @@ async function createAdamAccount() {
         videoUrl: sampleVideo.videoUrl,
         thumbnailUrl: sampleVideo.thumbnailUrl,
         userId: uid,
+        views: 0,  // Add initial views count
+        likes: 0,  // Make sure likes is initialized
+        comments: 0,  // Make sure comments is initialized
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
@@ -364,6 +385,10 @@ async function createAdamAccount() {
   }
 }
 
+function isString(value: any): value is string {
+  return typeof value === 'string';
+}
+
 async function main() {
   console.log('Starting seed process...');
   
@@ -378,6 +403,8 @@ async function main() {
     process.exit(1);
   }
   
+  console.log('Created Adam\'s account with UID:', adamUid);
+  
   // Add delay between Adam's account and random users
   await delay(2000);
   
@@ -387,6 +414,9 @@ async function main() {
     const uid = await createUserWithProfile(i, userIds);
     if (uid) {
       userIds.push(uid);
+      // Make this user follow Adam
+      await createFollowRelationship(uid, adamUid);
+      console.log(`User ${uid} is now following Adam`);
       // Add delay between user creations
       await delay(2000);
     }
@@ -395,6 +425,9 @@ async function main() {
   console.log('Seeding finished');
   process.exit(0);
 }
+
+// Remove or comment out the seedDatabase function since we're using main()
+// async function seedDatabase() { ... }
 
 main().catch((error) => {
   console.error('Seeding failed:', error);
