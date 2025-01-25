@@ -5,11 +5,12 @@ import { useAuth } from '../contexts/AuthContext';
 import { useUploadModal } from '../contexts/UploadModalContext';
 import { useEffect, useState } from 'react';
 import { database } from '../lib/firebase/config';
-import { ref, get } from 'firebase/database';
+import { ref, onValue, off } from 'firebase/database';
 
 interface UserProfile {
   name: string;
-  avatarUrl: string;
+  avatarUrl?: string;
+  profilePicture?: string;
 }
 
 export default function Navigation() {
@@ -19,38 +20,37 @@ export default function Navigation() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
 
   useEffect(() => {
-    const fetchUserProfile = async () => {
-      if (!user) {
-        setProfile(null);
-        return;
-      }
+    if (!user) {
+      setProfile(null);
+      return;
+    }
 
-      try {
-        const userRef = ref(database, `users/${user.uid}/profile`);
-        const snapshot = await get(userRef);
-        
-        if (snapshot.exists()) {
-          const userData = snapshot.val();
-          setProfile({
-            name: userData.name || user.email?.split('@')[0] || 'User',
-            avatarUrl: userData.avatarUrl || '/default-avatar.png'
-          });
-        } else {
-          setProfile({
-            name: user.email?.split('@')[0] || 'User',
-            avatarUrl: '/default-avatar.png'
-          });
-        }
-      } catch (error) {
-        console.error('Error fetching user profile:', error);
+    const userRef = ref(database, `users/${user.uid}/profile`);
+    
+    const unsubscribe = onValue(userRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const userData = snapshot.val();
         setProfile({
-          name: user.email?.split('@')[0] || 'User',
-          avatarUrl: '/default-avatar.png'
+          name: userData.name || user.email?.split('@')[0] || 'User',
+          profilePicture: userData.profilePicture,
+          avatarUrl: userData.avatarUrl
+        });
+      } else {
+        setProfile({
+          name: user.email?.split('@')[0] || 'User'
         });
       }
-    };
+    }, (error) => {
+      console.error('Error fetching user profile:', error);
+      setProfile({
+        name: user.email?.split('@')[0] || 'User'
+      });
+    });
 
-    fetchUserProfile();
+    // Cleanup subscription on unmount
+    return () => {
+      unsubscribe();
+    };
   }, [user]);
 
   const handleLogout = async () => {
@@ -130,7 +130,7 @@ export default function Navigation() {
             <div className="flex items-center">
               <div className="relative w-8 h-8">
                 <Image
-                  src={profile?.avatarUrl || '/default-avatar.png'}
+                  src={profile?.profilePicture || profile?.avatarUrl || '/default-avatar.png'}
                   alt={profile?.name || 'User'}
                   fill
                   className="rounded-full object-cover"

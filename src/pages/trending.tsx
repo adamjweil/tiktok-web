@@ -10,6 +10,8 @@ import { Dialog, Transition } from '@headlessui/react';
 import { useAuth } from '../contexts/AuthContext';
 import UploadModal from '../components/UploadModal';
 import CommentModal from '../components/CommentModal';
+import { useTrendingVideos } from '../hooks/useTrendingVideos';
+import { useLikeVideo, useIncrementViews } from '../hooks/useVideos';
 
 type Video = {
   id: string;
@@ -149,176 +151,38 @@ const VideoModal = ({ video, onClose, onVideoPlay }: VideoModalProps) => {
 };
 
 export default function Trending() {
-  const [mostLikedVideos, setMostLikedVideos] = useState<Video[]>([]);
-  const [mostCommentedVideos, setMostCommentedVideos] = useState<Video[]>([]);
-  const [recentVideos, setRecentVideos] = useState<Video[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data, isLoading, refetch: refreshVideos } = useTrendingVideos();
+  const likeMutation = useLikeVideo();
+  const viewMutation = useIncrementViews();
+  
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [commentModalVideo, setCommentModalVideo] = useState<Video | null>(null);
   const { user } = useAuth();
-  const [pendingRefresh, setPendingRefresh] = useState(false);
-
-  useEffect(() => {
-    fetchVideos();
-  }, []);
-
-  const fetchVideos = async () => {
-    try {
-      setLoading(true);
-      const videosRef = ref(database, 'videos');
-
-      // Fetch all videos first
-      const snapshot = await get(videosRef);
-      if (!snapshot.exists()) {
-        console.log('No videos found');
-        return;
-      }
-
-      const allVideos: Video[] = [];
-      
-      // Process each video
-      for (const childSnapshot of Object.values(snapshot.val())) {
-        const videoData = childSnapshot as any;
-        
-        // Fetch user profile for each video
-        const userProfileRef = ref(database, `users/${videoData.userId}/profile`);
-        const userProfileSnapshot = await get(userProfileRef);
-        const userProfile = userProfileSnapshot.val();
-
-        allVideos.push({
-          id: videoData.id || '',
-          userId: videoData.userId || '',
-          caption: videoData.title || '',
-          videoUrl: videoData.videoUrl || '',
-          likes: videoData.likes || 0,
-          comments: videoData.comments || 0,
-          views: videoData.views || 0,
-          username: userProfile?.name || videoData.username || 'Anonymous',
-          userImage: userProfile?.avatarUrl || videoData.userImage || '/default-avatar.png',
-          createdAt: videoData.createdAt || '',
-          thumbnailUrl: videoData.thumbnailUrl || undefined,
-          likedBy: videoData.likedBy || {},
-        });
-      }
-
-      // Sort for most liked videos
-      const sortedByLikes = [...allVideos].sort((a, b) => (b.likes || 0) - (a.likes || 0)).slice(0, 3);
-      setMostLikedVideos(sortedByLikes);
-
-      // Sort for most commented videos
-      const sortedByComments = [...allVideos].sort((a, b) => (b.comments || 0) - (a.comments || 0)).slice(0, 3);
-      setMostCommentedVideos(sortedByComments);
-
-      // Sort for most recent videos
-      const sortedByDate = [...allVideos].sort((a, b) => 
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      ).slice(0, 3);
-      setRecentVideos(sortedByDate);
-
-    } catch (error) {
-      console.error('Error fetching videos:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleVideoPlay = async (videoId: string) => {
-    try {
-      // Update view count in the database
-      const videoRef = ref(database, `videos/${videoId}`);
-      await update(videoRef, {
-        views: rtdbIncrement(1)
-      });
-
-      // Update local state for each section
-      const updateVideos = (videos: Video[]) =>
-        videos.map(video =>
-          video.id === videoId
-            ? { ...video, views: (video.views || 0) + 1 }
-            : video
-        );
-
-      setMostLikedVideos(prev => updateVideos(prev));
-      setMostCommentedVideos(prev => updateVideos(prev));
-      setRecentVideos(prev => updateVideos(prev));
-    } catch (error) {
-      console.error('Error updating view count:', error);
-    }
-  };
 
   const handleLike = async (videoId: string) => {
     if (!user) return;
-
-    try {
-      const videoRef = ref(database, `videos/${videoId}`);
-      const likedByRef = ref(database, `videos/${videoId}/likedBy/${user.uid}`);
-      const videoSnapshot = await get(videoRef);
-
-      if (!videoSnapshot.exists()) {
-        console.error('Video not found');
-        return;
-      }
-
-      const videoData = videoSnapshot.val();
-      const isLiked = videoData.likedBy && videoData.likedBy[user.uid];
-
-      if (isLiked) {
-        // Unlike
-        await update(videoRef, {
-          likes: rtdbIncrement(-1)
-        });
-        await set(likedByRef, null);
-      } else {
-        // Like
-        await update(videoRef, {
-          likes: rtdbIncrement(1)
-        });
-        await set(likedByRef, true);
-      }
-
-      // Update local state for all sections
-      const updateVideos = (videos: Video[]) =>
-        videos.map(video => {
-          if (video.id === videoId) {
-            const newLikedBy = { ...(video.likedBy || {}) };
-            if (isLiked) {
-              delete newLikedBy[user.uid];
-              return {
-                ...video,
-                likes: (video.likes || 0) - 1,
-                likedBy: newLikedBy
-              };
-            } else {
-              return {
-                ...video,
-                likes: (video.likes || 0) + 1,
-                likedBy: { ...newLikedBy, [user.uid]: true }
-              };
-            }
-          }
-          return video;
-        });
-
-      setMostLikedVideos(prev => updateVideos(prev));
-      setMostCommentedVideos(prev => updateVideos(prev));
-      setRecentVideos(prev => updateVideos(prev));
-    } catch (error) {
-      console.error('Error updating like:', error);
-    }
+    
+    const video = data?.mostLiked.find(v => v.id === videoId) || 
+                 data?.mostCommented.find(v => v.id === videoId) || 
+                 data?.recent.find(v => v.id === videoId);
+    
+    if (!video) return;
+    
+    const isLiked = video.likedBy?.[user.uid] || false;
+    await likeMutation.mutateAsync({ videoId, userId: user.uid, isLiked });
   };
 
-  const handleCommentAdded = async () => {
-    // Refresh videos immediately when a comment is added
-    await fetchVideos();
+  const handleVideoPlay = async (videoId: string) => {
+    await viewMutation.mutateAsync(videoId);
   };
 
   const handleCommentModalClose = () => {
     setCommentModalVideo(null);
   };
 
-  const refreshVideos = async () => {
-    await fetchVideos();
+  const handleCommentAdded = async () => {
+    await refreshVideos();
   };
 
   const Section = ({ title, description, videos }: { title: string; description: string; videos: Video[] }) => (
@@ -432,7 +296,7 @@ export default function Trending() {
         <div className="max-w-7xl mx-auto">
           <SearchBar />
 
-          {loading ? (
+          {isLoading ? (
             <div className="flex justify-center items-center h-64">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
             </div>
@@ -441,24 +305,24 @@ export default function Trending() {
               <Section
                 title="Most Liked Videos"
                 description="The cream of the crop - these videos have captured hearts across the platform! 💖"
-                videos={mostLikedVideos}
+                videos={data?.mostLiked || []}
               />
 
               <Section
                 title="Most Commented Videos"
                 description="Join the conversation - these videos have everyone talking! 💬"
-                videos={mostCommentedVideos}
+                videos={data?.mostCommented || []}
               />
 
               <Section
                 title="Fresh Off the Press"
                 description="Hot and fresh content - catch these trending videos before everyone else! 🔥"
-                videos={recentVideos}
+                videos={data?.recent || []}
               />
             </>
           )}
 
-          {!loading && !mostLikedVideos.length && !mostCommentedVideos.length && !recentVideos.length && (
+          {!data?.mostLiked.length && !data?.mostCommented.length && !data?.recent.length && (
             <div className="text-center py-12">
               <p className="text-gray-500 text-lg">No trending videos found</p>
             </div>
@@ -500,7 +364,7 @@ export default function Trending() {
           <UploadModal
             isOpen={isUploadModalOpen}
             onClose={() => setIsUploadModalOpen(false)}
-            onVideoUploaded={refreshVideos}
+            onVideoUploaded={() => refreshVideos()}
           />
         </div>
       </div>

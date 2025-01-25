@@ -10,23 +10,8 @@ import SearchBar from '../components/SearchBar';
 import VideoModal from '../components/VideoModal';
 import UploadModal from '../components/UploadModal';
 import CommentModal from '../components/CommentModal';
-
-interface Video {
-  id: string;
-  title: string;
-  description: string;
-  videoUrl: string;
-  thumbnailUrl: string;
-  userId: string;
-  username: string;
-  userImage: string;
-  createdAt: string;
-  likes: number;
-  comments: number;
-  shares: number;
-  likedBy?: string[];
-  views: number;
-}
+import { useVideos, useLikeVideo, useIncrementViews } from '../hooks/useVideos';
+import { Video } from '../types/video';
 
 interface Comment {
   id: string;
@@ -47,12 +32,9 @@ interface SearchResultType {
 }
 
 export default function Home() {
-  const [videos, setVideos] = useState<Video[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [showComments, setShowComments] = useState<string | null>(null);
-  const [newComment, setNewComment] = useState('');
-  const [comments, setComments] = useState<Record<string, Comment[]>>({});
+  const { data: videos, isLoading, error, refetch: refreshVideos } = useVideos();
+  const likeMutation = useLikeVideo();
+  const viewMutation = useIncrementViews();
   const { user } = useAuth();
   const { openUploadModal } = useUploadModal();
   const pageSize = 10;
@@ -60,111 +42,18 @@ export default function Home() {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [commentModalVideo, setCommentModalVideo] = useState<Video | null>(null);
 
-  const fetchVideos = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      console.log('Fetching videos from Realtime Database...');
-      const videosRef = ref(database, 'videos');
-      const snapshot = await get(videosRef);
-
-      if (snapshot.exists()) {
-        const allVideos: Video[] = [];
-        
-        // Fetch all videos first
-        for (const videoSnapshot of Object.values(snapshot.val())) {
-          const videoData = videoSnapshot as any;
-          
-          // Fetch user profile for each video
-          const userProfileRef = ref(database, `users/${videoData.userId}/profile`);
-          const userProfileSnapshot = await get(userProfileRef);
-          const userProfile = userProfileSnapshot.val();
-
-          allVideos.push({
-            ...videoData,
-            username: userProfile?.name || 'Anonymous',
-            userImage: userProfile?.avatarUrl || '/default-avatar.png',
-            likedBy: videoData.likedBy ? Object.keys(videoData.likedBy) : [],
-            videoUrl: videoData.videoUrl || '',
-            thumbnailUrl: videoData.thumbnailUrl || '/default-thumbnail.jpg',
-            views: videoData.views || 0
-          });
-        }
-
-        // Sort by createdAt in descending order
-        const sortedVideos = allVideos
-          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-          .slice(0, pageSize);
-
-        setVideos(sortedVideos);
-      } else {
-        console.log('No videos found');
-        setVideos([]);
-      }
-    } catch (error) {
-      console.error('Error fetching videos:', error);
-      setError(error instanceof Error ? error.message : 'Error fetching videos');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleLike = async (videoId: string) => {
     if (!user) return;
+    
+    const video = videos?.find(v => v.id === videoId);
+    if (!video) return;
+    
+    const isLiked = video.likedBy?.[user.uid] || false;
+    await likeMutation.mutateAsync({ videoId, userId: user.uid, isLiked });
+  };
 
-    try {
-      const videoRef = ref(database, `videos/${videoId}`);
-      const likedByRef = ref(database, `videos/${videoId}/likedBy/${user.uid}`);
-      const videoSnapshot = await get(videoRef);
-
-      if (!videoSnapshot.exists()) {
-        console.error('Video not found');
-        return;
-      }
-
-      const videoData = videoSnapshot.val();
-      const isLiked = videoData.likedBy && videoData.likedBy[user.uid];
-
-      if (isLiked) {
-        // Unlike
-        await update(videoRef, {
-          likes: rtdbIncrement(-1)
-        });
-        await set(likedByRef, null);
-      } else {
-        // Like
-        await update(videoRef, {
-          likes: rtdbIncrement(1)
-        });
-        await set(likedByRef, true);
-      }
-
-      // Update local state
-      setVideos(prev =>
-        prev.map(video => {
-          if (video.id === videoId) {
-            const newLikedBy = video.likedBy || [];
-            if (isLiked) {
-              return {
-                ...video,
-                likes: (video.likes || 0) - 1,
-                likedBy: newLikedBy.filter(id => id !== user.uid)
-              };
-            } else {
-              return {
-                ...video,
-                likes: (video.likes || 0) + 1,
-                likedBy: [...newLikedBy, user.uid]
-              };
-            }
-          }
-          return video;
-        })
-      );
-    } catch (error) {
-      console.error('Error updating like:', error);
-    }
+  const handleVideoPlay = async (videoId: string) => {
+    await viewMutation.mutateAsync(videoId);
   };
 
   const fetchComments = async (videoId: string) => {
@@ -261,14 +150,6 @@ export default function Home() {
     }
   };
 
-  const handleVideoPlay = (videoId: string) => {
-    // Implementation of handleVideoPlay function
-  };
-
-  const refreshVideos = () => {
-    // Implementation of refreshVideos function
-  };
-
   const handleCommentAdded = async () => {
     // Refresh videos immediately when a comment is added
     await fetchVideos();
@@ -278,11 +159,7 @@ export default function Home() {
     setCommentModalVideo(null);
   };
 
-  useEffect(() => {
-    fetchVideos();
-  }, []);
-
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="flex justify-center items-center min-h-screen">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
@@ -293,7 +170,7 @@ export default function Home() {
   if (error) {
     return (
       <div className="flex justify-center items-center min-h-screen">
-        <div className="text-red-500">{error}</div>
+        <div className="text-red-500">Error loading videos</div>
       </div>
     );
   }
@@ -315,7 +192,7 @@ export default function Home() {
       )}
 
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-        {videos.map((video) => (
+        {videos?.map((video) => (
           <div key={video.id} className="bg-white rounded-lg shadow-sm overflow-hidden">
             {/* User info header */}
             <div className="p-1.5 border-b">
@@ -371,14 +248,14 @@ export default function Home() {
                     handleLike(video.id);
                   }}
                   className={`flex items-center space-x-0.5 ${
-                    user && video.likedBy?.includes(user.uid)
+                    user && video.likedBy?.[user.uid]
                       ? 'text-red-500'
                       : 'text-gray-600 hover:text-red-500'
                   }`}
                 >
                   <svg 
                     className="h-4 w-4" 
-                    fill={user && video.likedBy?.includes(user.uid) ? 'currentColor' : 'none'} 
+                    fill={user && video.likedBy?.[user.uid] ? 'currentColor' : 'none'} 
                     stroke="currentColor" 
                     viewBox="0 0 24 24"
                   >
@@ -417,7 +294,7 @@ export default function Home() {
       <UploadModal
         isOpen={isUploadModalOpen}
         onClose={() => setIsUploadModalOpen(false)}
-        onVideoUploaded={refreshVideos}
+        onVideoUploaded={() => refreshVideos()}
       />
 
       {/* Comment Modal */}

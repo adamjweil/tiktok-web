@@ -1,8 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { getDatabase, ref, get } from 'firebase/database';
-import { app } from '../lib/firebase/config';
+import { useUsers } from '../hooks/useUsers';
 
 interface User {
   uid: string;
@@ -15,48 +14,12 @@ interface User {
 }
 
 export default function Users() {
-  const [users, setUsers] = useState<User[]>([]);
+  const { data: users, isLoading, error } = useUsers();
   const [searchQuery, setSearchQuery] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchUsers = async () => {
-      const db = getDatabase(app);
-      const usersRef = ref(db, 'users');
-      
-      try {
-        const snapshot = await get(usersRef);
-        if (snapshot.exists()) {
-          const usersData = snapshot.val();
-          const formattedUsers = Object.entries(usersData)
-            .map(([uid, data]: [string, any]) => {
-              // Ensure we have a valid profile object
-              const profile = data.profile || {};
-              return {
-                uid,
-                profile: {
-                  name: profile.name || 'Unknown User',
-                  avatarUrl: profile.avatarUrl || '/default-avatar.png',
-                  followers: profile.followers || 0,
-                  following: profile.following || 0
-                }
-              };
-            });
-          setUsers(formattedUsers);
-        }
-      } catch (error) {
-        console.error('Error fetching users:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchUsers();
-  }, []);
-
-  const filteredUsers = users.filter(user => 
+  const filteredUsers = users?.filter(user => 
     user.profile.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  ) || [];
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
@@ -90,6 +53,10 @@ export default function Users() {
         {isLoading ? (
           <div className="flex justify-center items-center h-64">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
+          </div>
+        ) : error ? (
+          <div className="text-center py-12">
+            <p className="text-red-500">Error loading users. Please try again later.</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
@@ -125,7 +92,7 @@ export default function Users() {
           </div>
         )}
 
-        {!isLoading && filteredUsers.length === 0 && (
+        {!isLoading && !error && filteredUsers.length === 0 && (
           <div className="text-center py-12">
             <p className="text-gray-500">No users found matching your search.</p>
           </div>
