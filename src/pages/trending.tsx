@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import { database } from '../lib/firebase/config';
-import { ref, get, query, orderByChild, limitToLast } from 'firebase/database';
+import { ref, get, query, orderByChild, limitToLast, update, increment as rtdbIncrement } from 'firebase/database';
 import VideoCard from '../components/VideoCard';
 import Head from 'next/head';
 import Link from 'next/link';
 import Image from 'next/image';
 import SearchBar from '../components/SearchBar';
+import { Dialog, Transition } from '@headlessui/react';
 
 type Video = {
   id: string;
@@ -21,11 +22,121 @@ type Video = {
   thumbnailUrl?: string;
 };
 
+interface VideoModalProps {
+  video: Video | null;
+  onClose: () => void;
+}
+
+const VideoModal = ({ video, onClose }: VideoModalProps) => {
+  if (!video) return null;
+
+  return (
+    <Transition appear show={true} as={Fragment}>
+      <Dialog as="div" className="relative z-50" onClose={onClose}>
+        <Transition.Child
+          as={Fragment}
+          enter="ease-out duration-300"
+          enterFrom="opacity-0"
+          enterTo="opacity-100"
+          leave="ease-in duration-200"
+          leaveFrom="opacity-100"
+          leaveTo="opacity-0"
+        >
+          <div className="fixed inset-0 bg-black bg-opacity-75" />
+        </Transition.Child>
+
+        <div className="fixed inset-0 overflow-y-auto">
+          <div className="flex min-h-full items-center justify-center p-4">
+            <Transition.Child
+              as={Fragment}
+              enter="ease-out duration-300"
+              enterFrom="opacity-0 scale-95"
+              enterTo="opacity-100 scale-100"
+              leave="ease-in duration-200"
+              leaveFrom="opacity-100 scale-100"
+              leaveTo="opacity-0 scale-95"
+            >
+              <Dialog.Panel className="w-full max-w-4xl transform overflow-hidden rounded-2xl bg-white shadow-xl transition-all">
+                {/* Close button */}
+                <button
+                  onClick={onClose}
+                  className="absolute top-4 right-4 z-10 p-2 bg-black bg-opacity-50 rounded-full text-white hover:bg-opacity-75 transition-all"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+
+                {/* Video container */}
+                <div className="aspect-video relative bg-black">
+                  <video
+                    className="w-full h-full"
+                    controls
+                    autoPlay
+                    src={video.videoUrl}
+                    poster={video.thumbnailUrl}
+                  />
+                </div>
+
+                {/* Video info */}
+                <div className="p-6">
+                  {/* Author info */}
+                  <div className="flex items-center mb-4">
+                    <Link href={`/profile/${video.userId}`} className="flex items-center">
+                      <div className="relative w-10 h-10">
+                        <Image
+                          src={video.userImage || '/default-avatar.png'}
+                          alt={video.username}
+                          className="rounded-full object-cover"
+                          fill
+                          sizes="40px"
+                        />
+                      </div>
+                      <span className="ml-3 font-medium text-gray-900">{video.username}</span>
+                    </Link>
+                  </div>
+
+                  {/* Video details */}
+                  <h3 className="text-xl font-semibold text-gray-900 mb-2">{video.caption}</h3>
+                  
+                  {/* Stats */}
+                  <div className="flex items-center space-x-6 text-gray-600">
+                    <div className="flex items-center">
+                      <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                      {video.views?.toLocaleString() || 0} views
+                    </div>
+                    <div className="flex items-center">
+                      <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                      </svg>
+                      {video.likes?.toLocaleString() || 0} likes
+                    </div>
+                    <div className="flex items-center">
+                      <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                      </svg>
+                      {video.comments?.toLocaleString() || 0} comments
+                    </div>
+                  </div>
+                </div>
+              </Dialog.Panel>
+            </Transition.Child>
+          </div>
+        </div>
+      </Dialog>
+    </Transition>
+  );
+};
+
 export default function Trending() {
   const [mostLikedVideos, setMostLikedVideos] = useState<Video[]>([]);
   const [mostCommentedVideos, setMostCommentedVideos] = useState<Video[]>([]);
   const [recentVideos, setRecentVideos] = useState<Video[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
 
   useEffect(() => {
     fetchVideos();
@@ -90,6 +201,30 @@ export default function Trending() {
     }
   };
 
+  const handleVideoPlay = async (videoId: string) => {
+    try {
+      // Update view count in the database
+      const videoRef = ref(database, `videos/${videoId}`);
+      await update(videoRef, {
+        views: rtdbIncrement(1)
+      });
+
+      // Update local state for each section
+      const updateVideos = (videos: Video[]) =>
+        videos.map(video =>
+          video.id === videoId
+            ? { ...video, views: (video.views || 0) + 1 }
+            : video
+        );
+
+      setMostLikedVideos(prev => updateVideos(prev));
+      setMostCommentedVideos(prev => updateVideos(prev));
+      setRecentVideos(prev => updateVideos(prev));
+    } catch (error) {
+      console.error('Error updating view count:', error);
+    }
+  };
+
   const Section = ({ title, description, videos }: { title: string; description: string; videos: Video[] }) => (
     <section className="mb-16">
       <div className="mb-6">
@@ -117,20 +252,37 @@ export default function Trending() {
               </div>
               
               {/* Video card */}
-              <div className="relative pt-[56.25%]">
+              <div 
+                className="relative pt-[56.25%] cursor-pointer group"
+                onClick={() => setSelectedVideo(video)}
+              >
                 <video
                   src={video.videoUrl}
                   className="absolute top-0 left-0 w-full h-full object-cover"
                   controls
                   playsInline
                   poster={video.thumbnailUrl || '/default-thumbnail.jpg'}
+                  onPlay={() => handleVideoPlay(video.id)}
                 />
+                <div className="absolute inset-0 bg-black opacity-0 group-hover:opacity-20 transition-opacity" />
               </div>
 
               {/* Video info */}
               <div className="p-3">
-                <h2 className="text-sm font-semibold mb-1 line-clamp-1">{video.caption}</h2>
+                <h2 
+                  className="text-sm font-semibold mb-1 line-clamp-1 cursor-pointer hover:text-indigo-600 transition-colors"
+                  onClick={() => setSelectedVideo(video)}
+                >
+                  {video.caption}
+                </h2>
                 <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center space-x-1 text-gray-600">
+                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                    <span className="text-xs">{video.views || 0}</span>
+                  </div>
                   <div className="flex items-center space-x-1 text-gray-600">
                     <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
@@ -193,6 +345,14 @@ export default function Trending() {
             <div className="text-center py-12">
               <p className="text-gray-500 text-lg">No trending videos found</p>
             </div>
+          )}
+
+          {/* Video Modal */}
+          {selectedVideo && (
+            <VideoModal
+              video={selectedVideo}
+              onClose={() => setSelectedVideo(null)}
+            />
           )}
         </div>
       </div>
