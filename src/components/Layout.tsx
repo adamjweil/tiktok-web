@@ -37,7 +37,7 @@ export default function Layout({ children }: LayoutProps) {
     <div className="flex min-h-screen">
       <Navigation />
       <main className="flex-1 pl-64">
-        <div className="container mx-auto px-4 py-8">
+        <div className="container mx-auto px-4 py-4">
           {children}
         </div>
       </main>
