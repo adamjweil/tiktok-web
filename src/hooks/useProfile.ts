@@ -9,6 +9,7 @@ interface UserProfile {
   email: string;
   bio: string;
   profilePicture: string;
+  avatarUrl?: string;
   followers: number;
   following: number;
   createdAt: string;
@@ -148,6 +149,25 @@ export const useFollowUser = () => {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['profile', variables.followingId] });
       queryClient.invalidateQueries({ queryKey: ['profile', variables.followerId] });
+      
+      queryClient.invalidateQueries({ 
+        queryKey: ['following', variables.followerId, variables.followingId] 
+      });
+
+      queryClient.invalidateQueries({ queryKey: ['users'] });
     },
+  });
+};
+
+export const useIsFollowing = (followerId: string | undefined, followingId: string) => {
+  return useQuery({
+    queryKey: ['following', followerId, followingId],
+    queryFn: async () => {
+      if (!followerId) return false;
+      const followRef = ref(database, `users/${followerId}/following/${followingId}`);
+      const snapshot = await get(followRef);
+      return snapshot.exists();
+    },
+    enabled: !!followerId && !!followingId,
   });
 }; 

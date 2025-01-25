@@ -12,21 +12,10 @@ import VideoCard from '../../components/VideoCard';
 import Link from 'next/link';
 import UploadModal from '../../components/UploadModal';
 import CommentModal from '../../components/CommentModal';
-import { useProfile, useProfileVideos, useUpdateProfile, useFollowUser } from '../../hooks/useProfile';
+import { useProfile, useProfileVideos, useUpdateProfile, useFollowUser, useIsFollowing } from '../../hooks/useProfile';
 import { useLikeVideo, useIncrementViews } from '../../hooks/useVideos';
-import { Video } from '../../types/video';
 
-interface UserProfile {
-  username: string;
-  email: string;
-  bio: string;
-  profilePicture: string;
-  followers: number;
-  following: number;
-  createdAt: string;
-}
-
-interface Video {
+interface ProfileVideo {
   id: string;
   userId: string;
   caption: string;
@@ -38,10 +27,22 @@ interface Video {
   username: string;
   userImage: string;
   createdAt: string;
+  likedBy?: Record<string, boolean>;
+}
+
+interface UserProfile {
+  username: string;
+  email: string;
+  bio: string;
+  profilePicture: string;
+  avatarUrl?: string;
+  followers: number;
+  following: number;
+  createdAt: string;
 }
 
 interface VideoModalProps {
-  video: Video | null;
+  video: ProfileVideo | null;
   onClose: () => void;
 }
 
@@ -261,16 +262,31 @@ export default function Profile() {
     refetch: refreshVideos 
   } = useProfileVideos(userId);
 
+  const {
+    data: isFollowing,
+    isLoading: isFollowingLoading
+  } = useIsFollowing(user?.uid, userId);
+
   const updateProfileMutation = useUpdateProfile();
   const followMutation = useFollowUser();
   const likeMutation = useLikeVideo();
   const viewMutation = useIncrementViews();
 
-  const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
+  const [selectedVideo, setSelectedVideo] = useState<ProfileVideo | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
-  const [commentModalVideo, setCommentModalVideo] = useState<Video | null>(null);
+  const [commentModalVideo, setCommentModalVideo] = useState<ProfileVideo | null>(null);
   const [showFollowModal, setShowFollowModal] = useState<'followers' | 'following' | null>(null);
+
+  const handleLike = async (videoId: string) => {
+    if (!user) return;
+    
+    const video = videos?.find(v => v.id === videoId);
+    if (!video) return;
+    
+    const isLiked = video.likedBy?.[user.uid] || false;
+    await likeMutation.mutateAsync({ videoId, userId: user.uid, isLiked });
+  };
 
   const handleProfileUpdate = async (bio: string, file: File | null) => {
     if (!user) return;
@@ -292,21 +308,11 @@ export default function Profile() {
       await followMutation.mutateAsync({
         followerId: user.uid,
         followingId: userId,
-        isFollowing: false, // You'll need to track this state
+        isFollowing: isFollowing || false,
       });
     } catch (error) {
       console.error('Error following user:', error);
     }
-  };
-
-  const handleLike = async (videoId: string) => {
-    if (!user) return;
-    
-    const video = videos?.find(v => v.id === videoId);
-    if (!video) return;
-    
-    const isLiked = video.likedBy?.[user.uid] || false;
-    await likeMutation.mutateAsync({ videoId, userId: user.uid, isLiked });
   };
 
   const handleVideoPlay = async (videoId: string) => {
@@ -344,7 +350,7 @@ export default function Profile() {
           <div className="flex items-center space-x-8">
             <div className="relative w-40 h-40">
               <Image
-                src={profile?.profilePicture || '/default-avatar.png'}
+                src={profile?.profilePicture || profile?.avatarUrl || '/default-avatar.png'}
                 alt={profile?.username || ''}
                 fill
                 className="rounded-full object-cover ring-4 ring-gray-50"
@@ -386,10 +392,21 @@ export default function Profile() {
                 <button
                   onClick={handleFollow}
                   className={`px-6 py-2 rounded-lg transition-colors ${
-                    followMutation.isLoading ? 'bg-gray-100 text-gray-700 hover:bg-gray-200' : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                    isFollowingLoading || followMutation.isPending
+                      ? 'bg-gray-100 text-gray-700' 
+                      : isFollowing 
+                        ? 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+                        : 'bg-indigo-600 text-white hover:bg-indigo-700'
                   } disabled:opacity-50`}
+                  disabled={isFollowingLoading || followMutation.isPending}
                 >
-                  {followMutation.isLoading ? 'Loading...' : 'Follow'}
+                  {followMutation.isPending 
+                    ? 'Loading...' 
+                    : isFollowingLoading
+                      ? 'Loading...'
+                      : isFollowing 
+                        ? 'Unfollow' 
+                        : 'Follow'}
                 </button>
               )}
             </div>
@@ -398,68 +415,86 @@ export default function Profile() {
 
         <div className="mt-8">
           <h2 className="text-2xl font-bold text-gray-900 mb-6">Videos</h2>
-          {videos?.length > 0 ? (
+          {videos && videos.length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {videos.map((video) => (
-                <div key={video.id} className="relative group bg-white rounded-lg shadow-sm overflow-hidden">
-                  <div className="relative pt-[56.25%]">
-                    <video
-                      src={video.videoUrl}
-                      className="absolute top-0 left-0 w-full h-full object-cover"
-                      controls
-                      playsInline
-                      poster={video.thumbnailUrl || '/images/default-thumbnail.svg'}
-                      onPlay={() => handleVideoPlay(video.id)}
-                    />
-                  </div>
-
-                  <div className="p-3">
-                    <h2 className="text-sm font-semibold mb-1 line-clamp-1">{video.caption}</h2>
-                    <div className="flex items-center justify-between text-sm">
-                      <div className="flex items-center space-x-1 text-gray-600">
-                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                        </svg>
-                        <span className="text-xs">{video.views || 0}</span>
-                      </div>
-                      <div className="flex items-center space-x-1 text-gray-600">
-                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-                        </svg>
-                        <span className="text-xs">{video.likes || 0}</span>
-                      </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setCommentModalVideo(video);
-                        }}
-                        className="flex items-center space-x-1 text-gray-600 hover:text-indigo-600 transition-colors"
-                      >
-                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                        </svg>
-                        <span className="text-xs">{video.comments || 0}</span>
-                      </button>
+              {videos.map((video) => {
+                const typedVideo = video as unknown as ProfileVideo;
+                return (
+                  <div key={typedVideo.id} className="relative group bg-white rounded-lg shadow-sm overflow-hidden">
+                    <div className="relative pt-[56.25%]">
+                      <video
+                        src={typedVideo.videoUrl}
+                        className="absolute top-0 left-0 w-full h-full object-cover"
+                        controls
+                        playsInline
+                        poster={typedVideo.thumbnailUrl || '/images/default-thumbnail.svg'}
+                        onPlay={() => handleVideoPlay(typedVideo.id)}
+                      />
                     </div>
-                  </div>
 
-                  {user?.uid === video.userId && (
-                    <button
-                      onClick={() => {
-                        if (window.confirm('Are you sure you want to delete this video?')) {
-                          // Implement delete logic here
-                        }
-                      }}
-                      className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-all hover:bg-red-600 z-10"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-              ))}
+                    <div className="p-3">
+                      <h2 className="text-sm font-semibold mb-1 line-clamp-1">{typedVideo.caption}</h2>
+                      <div className="flex items-center justify-between text-sm">
+                        <div className="flex items-center space-x-1 text-gray-600">
+                          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                          <span className="text-xs">{typedVideo.views || 0}</span>
+                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (user) handleLike(typedVideo.id);
+                          }}
+                          className={`flex items-center space-x-1 ${
+                            user && typedVideo.likedBy?.[user.uid]
+                              ? 'text-red-500'
+                              : 'text-gray-600 hover:text-red-500'
+                          } transition-colors`}
+                        >
+                          <svg 
+                            className="h-5 w-5" 
+                            fill={user && typedVideo.likedBy?.[user.uid] ? 'currentColor' : 'none'} 
+                            stroke="currentColor" 
+                            viewBox="0 0 24 24"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                          </svg>
+                          <span className="text-xs">{typedVideo.likes || 0}</span>
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setCommentModalVideo(typedVideo);
+                          }}
+                          className="flex items-center space-x-1 text-gray-600 hover:text-indigo-600 transition-colors"
+                        >
+                          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                          </svg>
+                          <span className="text-xs">{typedVideo.comments || 0}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {user?.uid === typedVideo.userId && (
+                      <button
+                        onClick={() => {
+                          if (window.confirm('Are you sure you want to delete this video?')) {
+                            // Implement delete logic here
+                          }
+                        }}
+                        className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-all hover:bg-red-600 z-10"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <div className="text-center py-12 bg-white rounded-xl shadow-sm">
@@ -507,6 +542,7 @@ export default function Profile() {
           onClose={() => setShowFollowModal(null)}
           type={showFollowModal}
           userId={userId}
+          title={showFollowModal === 'followers' ? 'Followers' : 'Following'}
         />
       )}
 
