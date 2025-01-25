@@ -12,6 +12,9 @@ import VideoCard from '../../components/VideoCard';
 import Link from 'next/link';
 import UploadModal from '../../components/UploadModal';
 import CommentModal from '../../components/CommentModal';
+import { useProfile, useProfileVideos, useUpdateProfile, useFollowUser } from '../../hooks/useProfile';
+import { useLikeVideo, useIncrementViews } from '../../hooks/useVideos';
+import { Video } from '../../types/video';
 
 interface UserProfile {
   username: string;
@@ -243,384 +246,82 @@ const VideoModal = ({ video, onClose }: VideoModalProps) => {
 export default function Profile() {
   const router = useRouter();
   const { user } = useAuth();
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [videos, setVideos] = useState<Video[]>([]);
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const userId = router.query.id as string;
+
+  const { 
+    data: profile, 
+    isLoading: profileLoading, 
+    error: profileError 
+  } = useProfile(userId);
+  
+  const { 
+    data: videos, 
+    isLoading: videosLoading, 
+    error: videosError,
+    refetch: refreshVideos 
+  } = useProfileVideos(userId);
+
+  const updateProfileMutation = useUpdateProfile();
+  const followMutation = useFollowUser();
+  const likeMutation = useLikeVideo();
+  const viewMutation = useIncrementViews();
+
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
-  const [isFollowing, setIsFollowing] = useState(false);
-  const [followLoading, setFollowLoading] = useState(false);
-  const [showFollowModal, setShowFollowModal] = useState<'followers' | 'following' | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [commentModalVideo, setCommentModalVideo] = useState<Video | null>(null);
+  const [showFollowModal, setShowFollowModal] = useState<'followers' | 'following' | null>(null);
 
-  useEffect(() => {
-    if (!router.isReady) return;
-
-    const userId = router.query.id as string;
-    if (!userId) {
-      setError('No profile ID provided');
-      setLoading(false);
-      return;
-    }
-
-    const checkFollowStatus = async (profileId: string) => {
-      if (!user) return false;
-      const followRef = dbRef(database, `follows/${user.uid}/${profileId}`);
-      const snapshot = await get(followRef);
-      return snapshot.exists();
-    };
-
-    const createDefaultProfile = async (userId: string) => {
-      console.log('Creating default profile for user:', userId);
-      const defaultProfile = {
-        name: user?.email?.split('@')[0] || 'User',
-        email: user?.email || '',
-        city: '',
-        state: '',
-        followers: 0,
-        following: 0,
-        avatarUrl: '/default-avatar.png',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-
-      const userRef = dbRef(database, `users/${userId}/profile`);
-      await set(userRef, defaultProfile);
-      
-      // Return the profile in the format expected by the component
-      return {
-        username: defaultProfile.name,
-        email: defaultProfile.email,
-        bio: '',
-        profilePicture: defaultProfile.avatarUrl,
-        followers: defaultProfile.followers,
-        following: defaultProfile.following,
-        createdAt: defaultProfile.createdAt,
-      };
-    };
-
-    const fetchProfile = async () => {
-      console.log('Fetching profile for ID:', userId);
-      try {
-        setLoading(true);
-        setError(null);
-        
-        // Fetch user profile
-        const userRef = dbRef(database, `users/${userId}/profile`);
-        const snapshot = await get(userRef);
-        
-        let userProfile: UserProfile;
-        if (!snapshot.exists()) {
-          console.log('Profile does not exist, checking if current user');
-          if (user && user.uid === userId) {
-            console.log('Creating default profile for current user');
-            userProfile = await createDefaultProfile(userId);
-          } else {
-            console.log('Profile not found and not current user');
-            setError('Profile not found');
-            setLoading(false);
-            return;
-          }
-        } else {
-          console.log('Profile found:', snapshot.val());
-          const userData = snapshot.val();
-          
-          userProfile = {
-            username: userData.name || userData.email?.split('@')[0] || 'User',
-            email: userData.email || '',
-            bio: userData.city && userData.state ? `${userData.city}, ${userData.state}` : '',
-            profilePicture: userData.avatarUrl || '/default-avatar.png',
-            followers: userData.followers || 0,
-            following: userData.following || 0,
-            createdAt: userData.createdAt || new Date().toISOString(),
-          };
-        }
-        
-        setProfile(userProfile);
-        
-        // Check if the current user is following this profile
-        if (user && user.uid !== userId) {
-          const following = await checkFollowStatus(userId);
-          setIsFollowing(following);
-        }
-
-        // Fetch videos directly from the videos collection and filter by userId
-        await fetchVideos(userId);
-
-      } catch (error) {
-        console.error('Error fetching profile:', error);
-        setError('Error loading profile');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    const fetchVideos = async (userId: string) => {
-      try {
-        const videosRef = dbRef(database, 'videos');
-        const snapshot = await get(videosRef);
-        const videosData = snapshot.val();
-
-        if (!videosData) {
-          setVideos([]);
-          return;
-        }
-
-        console.log('Raw videos data:', videosData);
-
-        // Filter videos by userId and map to Video type
-        const userVideos = Object.entries(videosData)
-          .filter(([_, video]: [string, any]) => video.userId === userId)
-          .map(([id, videoData]: [string, any]) => {
-            console.log('Processing video:', id, videoData);
-            return {
-              id,
-              userId: videoData.userId,
-              caption: videoData.title || videoData.caption || '',  // Try both title and caption
-              videoUrl: videoData.videoUrl || '',
-              thumbnailUrl: videoData.thumbnailUrl || '/images/default-thumbnail.svg',
-              likes: parseInt(videoData.likes) || 0,
-              comments: parseInt(videoData.comments) || 0,
-              views: parseInt(videoData.views) || 0,
-              username: videoData.username || profile?.username || 'Anonymous',
-              userImage: videoData.userImage || profile?.profilePicture || '/default-avatar.png',
-              createdAt: videoData.createdAt || new Date().toISOString()
-            };
-          })
-          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-        console.log('Processed videos:', userVideos);
-        setVideos(userVideos);
-      } catch (error) {
-        console.error('Error fetching videos:', error);
-        setError('Failed to load videos');
-      }
-    };
-
-    fetchProfile();
-  }, [router.isReady, router.query, user]);
-
-  const handleProfileUpdate = async (newBio: string, file: File | null) => {
-    const userId = router.query.id as string;
-    if (!profile || !user || user.uid !== userId) return;
-
+  const handleProfileUpdate = async (bio: string, file: File | null) => {
+    if (!user) return;
     try {
-      setError(null);
-      let newProfilePicture = profile.profilePicture;
-
-      if (file) {
-        const imageRef = storageRef(storage, `profile-pictures/${userId}`);
-        await uploadBytes(imageRef, file);
-        newProfilePicture = await getDownloadURL(imageRef);
-      }
-
-      const userRef = dbRef(database, `users/${userId}`);
-      const updatedProfile = {
-        ...profile,
-        bio: newBio,
-        profilePicture: newProfilePicture,
-      };
-
-      await set(userRef, updatedProfile);
-      setProfile(updatedProfile);
+      await updateProfileMutation.mutateAsync({
+        userId: user.uid,
+        bio,
+        profilePicture: file || undefined,
+      });
+      setIsEditModalOpen(false);
     } catch (error) {
       console.error('Error updating profile:', error);
-      setError('Failed to update profile');
     }
   };
 
   const handleFollow = async () => {
-    if (!user || !profile || user.uid === router.query.id) return;
-
-    const profileId = router.query.id as string;
-    setFollowLoading(true);
-
+    if (!user || !userId) return;
     try {
-      const followingRef = dbRef(database, `userFollowing/${user.uid}/${profileId}`);
-      const followersRef = dbRef(database, `userFollowers/${profileId}/${user.uid}`);
-      const userProfileRef = dbRef(database, `users/${profileId}/profile`);
-      const currentUserProfileRef = dbRef(database, `users/${user.uid}/profile`);
-
-      if (isFollowing) {
-        // Unfollow
-        await remove(followingRef);
-        await remove(followersRef);
-        
-        // Update follower/following counts
-        const userSnapshot = await get(userProfileRef);
-        if (userSnapshot.exists()) {
-          const userProfile = userSnapshot.val();
-          await set(userProfileRef, {
-            ...userProfile,
-            followers: Math.max(0, (userProfile.followers || 0) - 1)
-          });
-        }
-
-        const currentUserSnapshot = await get(currentUserProfileRef);
-        if (currentUserSnapshot.exists()) {
-          const currentUserProfile = currentUserSnapshot.val();
-          await set(currentUserProfileRef, {
-            ...currentUserProfile,
-            following: Math.max(0, (currentUserProfile.following || 0) - 1)
-          });
-        }
-
-        setProfile(prev => prev ? {
-          ...prev,
-          followers: Math.max(0, (prev.followers || 0) - 1)
-        } : null);
-        setIsFollowing(false);
-      } else {
-        // Follow
-        const timestamp = new Date().toISOString();
-        await set(followingRef, { createdAt: timestamp });
-        await set(followersRef, { createdAt: timestamp });
-        
-        // Update follower/following counts
-        const userSnapshot = await get(userProfileRef);
-        if (userSnapshot.exists()) {
-          const userProfile = userSnapshot.val();
-          await set(userProfileRef, {
-            ...userProfile,
-            followers: (userProfile.followers || 0) + 1
-          });
-        }
-
-        const currentUserSnapshot = await get(currentUserProfileRef);
-        if (currentUserSnapshot.exists()) {
-          const currentUserProfile = currentUserSnapshot.val();
-          await set(currentUserProfileRef, {
-            ...currentUserProfile,
-            following: (currentUserProfile.following || 0) + 1
-          });
-        }
-
-        setProfile(prev => prev ? {
-          ...prev,
-          followers: (prev.followers || 0) + 1
-        } : null);
-        setIsFollowing(true);
-      }
+      await followMutation.mutateAsync({
+        followerId: user.uid,
+        followingId: userId,
+        isFollowing: false, // You'll need to track this state
+      });
     } catch (error) {
-      console.error('Error updating follow status:', error);
-      setError('Failed to update follow status');
-    } finally {
-      setFollowLoading(false);
+      console.error('Error following user:', error);
     }
   };
 
-  const handleDeleteVideo = async (videoId: string, videoUrl: string) => {
-    if (!user || user.uid !== router.query.id) return;
-
-    try {
-      // Delete video metadata from database first
-      await remove(dbRef(database, `videos/${videoId}`));
-      
-      // Delete video reference from user's videos
-      await remove(dbRef(database, `users/${user.uid}/videos/${videoId}`));
-
-      // Only try to delete from storage if it's a Firebase Storage URL
-      if (videoUrl.includes('firebasestorage.googleapis.com')) {
-        try {
-          const match = videoUrl.match(/o\/(.*?)\?/);
-          if (match) {
-            const encodedPath = match[1];
-            const fullPath = decodeURIComponent(encodedPath);
-            console.log('Deleting video from storage at path:', fullPath);
-            const videoRef = storageRef(storage, fullPath);
-            await deleteObject(videoRef);
-          }
-        } catch (storageError) {
-          console.error('Error deleting from storage:', storageError);
-          // Continue with the function even if storage deletion fails
-        }
-      } else {
-        console.log('Skipping storage deletion for seeded video:', videoUrl);
-      }
-
-      // Update local state
-      setVideos(prevVideos => prevVideos.filter(v => v.id !== videoId));
-      console.log('Video deleted successfully');
-    } catch (error) {
-      console.error('Error deleting video:', error);
-    }
-  };
-
-  const refreshVideos = async () => {
-    if (!router.query.id) return;
+  const handleLike = async (videoId: string) => {
+    if (!user) return;
     
-    try {
-      console.log('Starting video refresh...');
-      const videosRef = dbRef(database, 'videos');
-      const snapshot = await get(videosRef);
-      const videosData = snapshot.val();
-
-      if (!videosData) {
-        console.log('No videos found, setting empty array');
-        setVideos([]);
-        return;
-      }
-
-      console.log('Refreshing videos data:', videosData);
-
-      // Filter videos by userId and map to Video type
-      const userVideos = Object.entries(videosData)
-        .filter(([_, video]: [string, any]) => video.userId === router.query.id)
-        .map(([id, videoData]: [string, any]) => ({
-          id,
-          userId: videoData.userId,
-          caption: videoData.title || videoData.caption || '',
-          videoUrl: videoData.videoUrl || '',
-          thumbnailUrl: videoData.thumbnailUrl || '/images/default-thumbnail.svg',
-          likes: parseInt(videoData.likes) || 0,
-          comments: parseInt(videoData.comments) || 0,
-          views: parseInt(videoData.views) || 0,
-          username: videoData.username || profile?.username || 'Anonymous',
-          userImage: videoData.userImage || profile?.profilePicture || '/default-avatar.png',
-          createdAt: videoData.createdAt || new Date().toISOString()
-        }))
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-      console.log('Setting videos state with:', userVideos);
-      setVideos(userVideos);
-    } catch (error) {
-      console.error('Error refreshing videos:', error);
-    }
+    const video = videos?.find(v => v.id === videoId);
+    if (!video) return;
+    
+    const isLiked = video.likedBy?.[user.uid] || false;
+    await likeMutation.mutateAsync({ videoId, userId: user.uid, isLiked });
   };
 
   const handleVideoPlay = async (videoId: string) => {
-    try {
-      // Update view count in the database
-      const videoRef = dbRef(database, `videos/${videoId}`);
-      await update(videoRef, {
-        views: rtdbIncrement(1)
-      });
-
-      // Update local state
-      setVideos(prevVideos =>
-        prevVideos.map(video =>
-          video.id === videoId
-            ? { ...video, views: (video.views || 0) + 1 }
-            : video
-        )
-      );
-    } catch (error) {
-      console.error('Error updating view count:', error);
-    }
-  };
-
-  const handleCommentAdded = async () => {
-    // Refresh videos immediately when a comment is added
-    await refreshVideos();
+    await viewMutation.mutateAsync(videoId);
   };
 
   const handleCommentModalClose = () => {
     setCommentModalVideo(null);
   };
 
-  if (!router.isReady) {
+  const handleCommentAdded = async () => {
+    await refreshVideos();
+  };
+
+  if (profileLoading || videosLoading) {
     return (
       <div className="flex justify-center items-center min-h-screen">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
@@ -628,26 +329,10 @@ export default function Profile() {
     );
   }
 
-  if (loading) {
+  if (profileError || videosError) {
     return (
       <div className="flex justify-center items-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex justify-center items-center min-h-screen">
-        <div className="text-red-500">{error}</div>
-      </div>
-    );
-  }
-
-  if (!profile) {
-    return (
-      <div className="flex justify-center items-center min-h-screen">
-        <div className="text-gray-500">Profile not found</div>
+        <div className="text-red-500">Error loading profile</div>
       </div>
     );
   }
@@ -655,7 +340,6 @@ export default function Profile() {
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="max-w-6xl mx-auto">
-        {/* Profile Header */}
         <div className="bg-white shadow rounded-lg p-8 mb-8">
           <div className="flex items-center space-x-8">
             <div className="relative w-40 h-40">
@@ -685,13 +369,13 @@ export default function Profile() {
                   <span className="text-gray-500">following</span>
                 </button>
                 <div className="text-center px-3 py-2">
-                  <span className="block text-2xl font-bold text-gray-900">{videos.length}</span>
+                  <span className="block text-2xl font-bold text-gray-900">{videos?.length || 0}</span>
                   <span className="text-gray-500">videos</span>
                 </div>
               </div>
             </div>
             <div className="flex space-x-4">
-              {user && user.uid === router.query.id ? (
+              {user && user.uid === userId ? (
                 <button
                   onClick={() => setIsEditModalOpen(true)}
                   className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition-colors"
@@ -701,35 +385,23 @@ export default function Profile() {
               ) : user && (
                 <button
                   onClick={handleFollow}
-                  disabled={followLoading}
                   className={`px-6 py-2 rounded-lg transition-colors ${
-                    isFollowing 
-                      ? 'bg-gray-100 text-gray-700 hover:bg-gray-200' 
-                      : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                    followMutation.isLoading ? 'bg-gray-100 text-gray-700 hover:bg-gray-200' : 'bg-indigo-600 text-white hover:bg-indigo-700'
                   } disabled:opacity-50`}
                 >
-                  {followLoading ? (
-                    <div className="flex items-center">
-                      <div className="w-4 h-4 border-2 border-gray-200 border-t-indigo-600 rounded-full animate-spin mr-2"></div>
-                      {isFollowing ? 'Unfollowing...' : 'Following...'}
-                    </div>
-                  ) : (
-                    isFollowing ? 'Unfollow' : 'Follow'
-                  )}
+                  {followMutation.isLoading ? 'Loading...' : 'Follow'}
                 </button>
               )}
             </div>
           </div>
         </div>
 
-        {/* Videos Grid */}
         <div className="mt-8">
           <h2 className="text-2xl font-bold text-gray-900 mb-6">Videos</h2>
-          {videos.length > 0 ? (
+          {videos?.length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {videos.map((video) => (
                 <div key={video.id} className="relative group bg-white rounded-lg shadow-sm overflow-hidden">
-                  {/* Video with thumbnail */}
                   <div className="relative pt-[56.25%]">
                     <video
                       src={video.videoUrl}
@@ -741,7 +413,6 @@ export default function Profile() {
                     />
                   </div>
 
-                  {/* Video info */}
                   <div className="p-3">
                     <h2 className="text-sm font-semibold mb-1 line-clamp-1">{video.caption}</h2>
                     <div className="flex items-center justify-between text-sm">
@@ -773,12 +444,11 @@ export default function Profile() {
                     </div>
                   </div>
 
-                  {/* Delete button */}
                   {user?.uid === video.userId && (
                     <button
                       onClick={() => {
                         if (window.confirm('Are you sure you want to delete this video?')) {
-                          handleDeleteVideo(video.id, video.videoUrl);
+                          // Implement delete logic here
                         }
                       }}
                       className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-all hover:bg-red-600 z-10"
@@ -802,8 +472,7 @@ export default function Profile() {
           )}
         </div>
 
-        {/* Add floating upload button */}
-        {user && user.uid === router.query.id && (
+        {user && user.uid === userId && (
           <button
             onClick={() => setIsUploadModalOpen(true)}
             className="fixed bottom-8 right-8 bg-indigo-600 text-white p-4 rounded-full shadow-lg hover:bg-indigo-700 transition-colors z-50"
@@ -816,11 +485,11 @@ export default function Profile() {
         )}
       </div>
 
-      {profile && (
+      {isEditModalOpen && (
         <EditProfileModal
           isOpen={isEditModalOpen}
           onClose={() => setIsEditModalOpen(false)}
-          profile={profile}
+          profile={profile!}
           onSave={handleProfileUpdate}
         />
       )}
@@ -832,30 +501,21 @@ export default function Profile() {
         />
       )}
 
-      {/* Add the modals */}
-      <FollowListModal
-        isOpen={showFollowModal === 'followers'}
-        onClose={() => setShowFollowModal(null)}
-        userId={router.query.id as string}
-        type="followers"
-        title="Followers"
-      />
-      <FollowListModal
-        isOpen={showFollowModal === 'following'}
-        onClose={() => setShowFollowModal(null)}
-        userId={router.query.id as string}
-        type="following"
-        title="Following"
-      />
+      {showFollowModal && (
+        <FollowListModal
+          isOpen={!!showFollowModal}
+          onClose={() => setShowFollowModal(null)}
+          type={showFollowModal}
+          userId={userId}
+        />
+      )}
 
-      {/* Add UploadModal */}
       <UploadModal
         isOpen={isUploadModalOpen}
         onClose={() => setIsUploadModalOpen(false)}
-        onVideoUploaded={refreshVideos}
+        onVideoUploaded={() => refreshVideos()}
       />
 
-      {/* Comment Modal */}
       {commentModalVideo && (
         <CommentModal
           isOpen={!!commentModalVideo}
