@@ -2,7 +2,7 @@ import { useEffect, useState, Fragment, useRef } from 'react';
 import { useRouter } from 'next/router';
 import { useAuth } from '../../contexts/AuthContext';
 import { database, storage } from '../../lib/firebase/config';
-import { ref as dbRef, get, set, remove } from 'firebase/database';
+import { ref as dbRef, get, set, remove, update, increment as rtdbIncrement } from 'firebase/database';
 import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import Image from 'next/image';
 import { BsFillPlayCircleFill } from 'react-icons/bs';
@@ -584,6 +584,27 @@ export default function Profile() {
     }
   };
 
+  const handleVideoPlay = async (videoId: string) => {
+    try {
+      // Update view count in the database
+      const videoRef = dbRef(database, `videos/${videoId}`);
+      await update(videoRef, {
+        views: rtdbIncrement(1)
+      });
+
+      // Update local state
+      setVideos(prevVideos =>
+        prevVideos.map(video =>
+          video.id === videoId
+            ? { ...video, views: (video.views || 0) + 1 }
+            : video
+        )
+      );
+    } catch (error) {
+      console.error('Error updating view count:', error);
+    }
+  };
+
   if (!router.isReady) {
     return (
       <div className="flex justify-center items-center min-h-screen">
@@ -709,6 +730,7 @@ export default function Profile() {
                       controls
                       playsInline
                       poster={video.thumbnailUrl || '/images/default-thumbnail.svg'}
+                      onPlay={() => handleVideoPlay(video.id)}
                     />
                   </div>
 
@@ -716,6 +738,13 @@ export default function Profile() {
                   <div className="p-3">
                     <h2 className="text-sm font-semibold mb-1 line-clamp-1">{video.caption}</h2>
                     <div className="flex items-center justify-between text-sm">
+                      <div className="flex items-center space-x-1 text-gray-600">
+                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                        <span className="text-xs">{video.views || 0}</span>
+                      </div>
                       <div className="flex items-center space-x-1 text-gray-600">
                         <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
