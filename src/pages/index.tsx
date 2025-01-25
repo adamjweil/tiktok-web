@@ -152,7 +152,7 @@ export default function Home() {
 
   const handleCommentAdded = async () => {
     // Refresh videos immediately when a comment is added
-    await fetchVideos();
+    await refreshVideos();
   };
 
   const handleCommentModalClose = () => {
