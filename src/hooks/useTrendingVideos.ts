@@ -7,6 +7,7 @@ interface TrendingVideos {
   mostLiked: Video[];
   mostCommented: Video[];
   recent: Video[];
+  mostViewed: Video[];
 }
 
 export const useTrendingVideos = () => {
@@ -17,7 +18,7 @@ export const useTrendingVideos = () => {
       const snapshot = await get(videosRef);
       
       if (!snapshot.exists()) {
-        return { mostLiked: [], mostCommented: [], recent: [] };
+        return { mostLiked: [], mostCommented: [], recent: [], mostViewed: [] };
       }
 
       const allVideos: Video[] = [];
@@ -46,6 +47,9 @@ export const useTrendingVideos = () => {
           .slice(0, 3),
         recent: [...allVideos]
           .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+          .slice(0, 3),
+        mostViewed: [...allVideos]
+          .sort((a, b) => (b.views || 0) - (a.views || 0))
           .slice(0, 3),
       };
     },

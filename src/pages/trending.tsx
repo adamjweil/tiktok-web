@@ -312,6 +312,12 @@ export default function Trending() {
               />
 
               <Section
+                title="Most Viewed Videos"
+                description="These videos are breaking view records - see what everyone's watching! 👀"
+                videos={data?.mostViewed || []}
+              />
+
+              <Section
                 title="Most Commented Videos"
                 description="Join the conversation - these videos have everyone talking! 💬"
                 videos={data?.mostCommented || []}
@@ -325,7 +331,7 @@ export default function Trending() {
             </>
           )}
 
-          {!data?.mostLiked.length && !data?.mostCommented.length && !data?.recent.length && (
+          {!data?.mostLiked.length && !data?.mostCommented.length && !data?.recent.length && !data?.mostViewed.length && (
             <div className="text-center py-12">
               <p className="text-gray-500 text-lg">No trending videos found</p>
             </div>

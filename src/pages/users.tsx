@@ -27,6 +27,16 @@ function classNames(...classes: string[]) {
   return classes.filter(Boolean).join(' ');
 }
 
+// Add this helper function to filter users
+const filterUsersBySearch = (users: User[] | undefined, searchQuery: string) => {
+  if (!users || !searchQuery) return users;
+  const query = searchQuery.toLowerCase();
+  return users.filter(user => 
+    user.profile.name.toLowerCase().includes(query) ||
+    (user.profile.bio && user.profile.bio.toLowerCase().includes(query))
+  );
+};
+
 export default function Users() {
   const { user } = useAuth();
   const { data: users, isLoading: isUsersLoading } = useUsers();
@@ -153,9 +163,12 @@ export default function Users() {
     }
   });
 
-  const filteredUsers = users?.filter(user => 
-    user.profile.name.toLowerCase().includes(searchQuery.toLowerCase())
-  ) || [];
+  // Update the filtered lists with the search query
+  const filteredAllUsers = filterUsersBySearch(users, searchQuery);
+  const filteredFollowers = filterUsersBySearch(followers, searchQuery);
+  const filteredFollowing = filterUsersBySearch(following, searchQuery);
+  const filteredNewUsers = filterUsersBySearch(newUsers, searchQuery);
+  const filteredActiveUsers = filterUsersBySearch(activeUsers, searchQuery);
 
   const renderUserGrid = (userList: User[] | undefined, isLoading: boolean, emptyMessage: string) => {
     if (isLoading) {
@@ -386,26 +399,26 @@ export default function Users() {
 
           <Tab.Panels className="mt-2">
             <Tab.Panel>
-              {renderUserGrid(filteredUsers, isUsersLoading, 'No users found matching your search.')}
+              {renderUserGrid(filteredAllUsers, isUsersLoading, 'No users found matching your search.')}
             </Tab.Panel>
             
             {user && (
               <>
                 <Tab.Panel>
-                  {renderUserGrid(followers, isFollowersLoading, 'No followers yet.')}
+                  {renderUserGrid(filteredFollowers, isFollowersLoading, 'No followers found matching your search.')}
                 </Tab.Panel>
                 <Tab.Panel>
-                  {renderUserGrid(following, isFollowingLoading, 'Not following anyone yet.')}
+                  {renderUserGrid(filteredFollowing, isFollowingLoading, 'No following users found matching your search.')}
                 </Tab.Panel>
               </>
             )}
             
             <Tab.Panel>
-              {renderNewUserGrid(newUsers, isNewUsersLoading, 'No new users to display.')}
+              {renderNewUserGrid(filteredNewUsers, isNewUsersLoading, 'No new users found matching your search.')}
             </Tab.Panel>
             
             <Tab.Panel>
-              {renderUserGrid(activeUsers, isActiveUsersLoading, 'No active users to display.')}
+              {renderUserGrid(filteredActiveUsers, isActiveUsersLoading, 'No active users found matching your search.')}
             </Tab.Panel>
           </Tab.Panels>
         </Tab.Group>
